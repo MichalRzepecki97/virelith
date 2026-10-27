@@ -295,7 +295,7 @@ class Desktop(QMainWindow):
             except Exception as exc:
                 history_note = f"WARNING: cannot read history: {exc}"
             self.output.setText(f"Files analyzed: {len(files)}   ·   Detections: {detections}\n"
-                                f"Report: {report}\nExit code: {code}\n"
+                                f"Report: {report}\nHistory: {history_note}\nExit code: {code}\n"
                                 + (f"Details: {stderr[-1200:]}" if stderr else ""))
         except (OSError, ValueError):
             self.output.setText(f"No valid scan report produced. Exit code: {code}\n{stderr[-1200:]}")
