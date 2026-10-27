@@ -43,7 +43,7 @@ def analyze_pe(path: Path, *, max_bytes: int = 64 * 1024 * 1024) -> dict:
             result["entry_point"] = int(pe.OPTIONAL_HEADER.AddressOfEntryPoint)
             result["section_count"] = len(pe.sections)
             for section in pe.sections:
-                name = section.Name.rstrip(b"\\x00").decode("utf-8", errors="replace")
+                name = section.Name.rstrip(bytes([0])).decode("utf-8", errors="replace")
                 data = section.get_data()
                 entropy = round(_entropy(data), 3)
                 flags = int(section.Characteristics)
