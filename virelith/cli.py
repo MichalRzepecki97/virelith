@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from .pe_analyzer import analyze_pe
 from .heuristic_engine import evaluate_heuristics
 from .active_rules import load_active_rules
+from .scan_history import save_scan
 
 
 def scan_clamav(path: Path, exe: str) -> dict:
@@ -83,6 +84,7 @@ def main():
     parser.add_argument("--rules", type=Path, default=Path(__file__).resolve().parent.parent / "rules" / "test_rule.yar")
     parser.add_argument("--rule-store", type=Path, help="use activated signed rules in this trusted store")
     parser.add_argument("--report", type=Path, default=Path("scan-report.json"))
+    parser.add_argument("--history-db", type=Path, help="optional local SQLite scan history")
     parser.add_argument("--max-yara-mb", type=int, default=64)
     args = parser.parse_args()
     if args.max_yara_mb < 1:
@@ -112,6 +114,13 @@ def main():
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Report: {args.report.resolve()}")
+    if args.history_db is not None:
+        try:
+            scan_id = save_scan(args.history_db, payload)
+            print(f"History ID: {scan_id}")
+        except (OSError, ValueError, __import__("sqlite3").Error) as exc:
+            print(f"History save failed: {exc}", file=__import__("sys").stderr)
+            return 2
     if any(r["verdict"] == "detection" for r in results):
         return 1
     if any(r["verdict"] != "no_detection" for r in results):
