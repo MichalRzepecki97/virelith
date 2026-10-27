@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from .desktop_views import HistoryView, QuarantineView, SettingsView
+from .scan_history import recent_scans
 
 STYLE = """
 QWidget { background: #F7F8F7; color: #24313B; font-family: 'Segoe UI'; font-size: 13px; }
