@@ -287,6 +287,13 @@ class Desktop(QMainWindow):
             data = json.loads(report.read_text(encoding="utf-8"))
             files = data.get("files", [])
             detections = sum(f.get("verdict") == "detection" for f in files)
+            try:
+                saved = any(row["created_utc"] == data.get("created_utc")
+                            and row["target"] == data.get("target")
+                            for row in recent_scans(self.history_path(), limit=100))
+                history_note = "Saved in history" if saved else "WARNING: history record missing"
+            except Exception as exc:
+                history_note = f"WARNING: cannot read history: {exc}"
             self.output.setText(f"Files analyzed: {len(files)}   ·   Detections: {detections}\n"
                                 f"Report: {report}\nExit code: {code}\n"
                                 + (f"Details: {stderr[-1200:]}" if stderr else ""))
@@ -295,7 +302,7 @@ class Desktop(QMainWindow):
         if report.exists():
             self.history_view.db_path = self.history_path()
             self.history_view.refresh()
-            self.output.setText(self.output.text() + "\\nOpen History to check whether this scan was saved.")
+            self.output.setText(self.output.text() + "\nOpen History to review this scan.")
         self.proc.deleteLater()
         self.proc = None
 
