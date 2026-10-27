@@ -7,7 +7,7 @@ name = "virelith"
 version = "0.1.0"
 description = "Experimental local Windows malware scanner: ClamAV + YARA-X"
 requires-python = ">=3.12"
-dependencies = ["yara-x>=1.20,<2", "pefile>=2023.2.7,<2027"]
+dependencies = ["yara-x>=1.20,<2", "pefile>=2023.2.7,<2027", "cryptography>=43,<48"]
 
 [project.scripts]
 virelith = "virelith.cli:main"
