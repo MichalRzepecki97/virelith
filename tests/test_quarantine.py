@@ -44,3 +44,30 @@ def test_symlink_rejected(tmp_path):
 
 def test_invalid_id(tmp_path):
     assert restore_file("../escape", tmp_path / "store", confirmed=True)["status"] == "error"
+
+
+def test_hardlinked_source_rejected(tmp_path):
+    import os
+    import pytest
+    source = tmp_path / "source.txt"
+    source.write_text("test")
+    alias = tmp_path / "alias.txt"
+    try:
+        os.link(source, alias)
+    except OSError:
+        pytest.skip("hardlinks unavailable")
+    result = quarantine_file(source, tmp_path / "store", confirmed=True)
+    assert result["status"] == "error"
+    assert source.exists() and alias.exists()
+
+
+def test_symlinked_source_parent_rejected(tmp_path):
+    real = tmp_path / "real"
+    real.mkdir()
+    source = real / "file.txt"
+    source.write_text("test")
+    link = tmp_path / "alias"
+    link.symlink_to(real, target_is_directory=True)
+    result = quarantine_file(link / "file.txt", tmp_path / "store", confirmed=True)
+    assert result["status"] == "error"
+    assert source.exists()
