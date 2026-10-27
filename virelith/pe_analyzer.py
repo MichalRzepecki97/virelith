@@ -12,7 +12,8 @@ def _entropy(data: bytes) -> float:
         return 0.0
     counts = Counter(data)
     length = len(data)
-    return -sum((count / length) * math.log2(count / length) for count in counts.values())
+    value = -sum((count / length) * math.log2(count / length) for count in counts.values())
+    return max(0.0, value)
 
 
 def analyze_pe(path: Path, *, max_bytes: int = 64 * 1024 * 1024) -> dict:
