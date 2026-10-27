@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 
 from .pe_analyzer import analyze_pe
 from .heuristic_engine import evaluate_heuristics
+from .active_rules import load_active_rules
 
 
 def scan_clamav(path: Path, exe: str) -> dict:
@@ -80,14 +81,22 @@ def main():
     parser.add_argument("target", type=Path, help="file or directory")
     parser.add_argument("--clam", default="clamscan.exe" if os.name == "nt" else "clamscan")
     parser.add_argument("--rules", type=Path, default=Path(__file__).resolve().parent.parent / "rules" / "test_rule.yar")
+    parser.add_argument("--rule-store", type=Path, help="use activated signed rules in this trusted store")
     parser.add_argument("--report", type=Path, default=Path("scan-report.json"))
     parser.add_argument("--max-yara-mb", type=int, default=64)
     args = parser.parse_args()
     if args.max_yara_mb < 1:
         parser.error("--max-yara-mb must be >= 1")
+    if args.rule_store is not None and args.rules != parser.get_default("rules"):
+        parser.error("--rules and --rule-store cannot be combined")
     import yara_x
     try:
-        compiled = yara_x.compile(args.rules.read_text(encoding="utf-8"))
+        if args.rule_store is not None:
+            rule_source, rule_metadata = load_active_rules(args.rule_store)
+        else:
+            rule_source = args.rules.read_text(encoding="utf-8")
+            rule_metadata = {"source": "local_file", "path": str(args.rules)}
+        compiled = yara_x.compile(rule_source)
     except Exception as exc:
         parser.error(f"Cannot compile rules: {exc}")
     results = []
@@ -99,7 +108,7 @@ def main():
     except FileNotFoundError:
         parser.error(f"Target not found: {args.target}")
     payload = {"schema": 1, "created_utc": datetime.now(timezone.utc).isoformat(),
-               "target": str(args.target), "files": results}
+               "target": str(args.target), "yara_rules": rule_metadata, "files": results}
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Report: {args.report.resolve()}")
