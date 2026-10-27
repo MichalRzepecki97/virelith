@@ -241,7 +241,6 @@ class Desktop(QMainWindow):
         self.proc.setArguments(arguments)
         self.proc.finished.connect(lambda code, _status: self.scan_finished(code, report))
         self.proc.readyReadStandardOutput.connect(lambda: self.proc.readAllStandardOutput() if self.proc else None)
-        self.proc.readyReadStandardError.connect(lambda: self.proc.readAllStandardError() if False else None)
         self.proc.errorOccurred.connect(self.process_error)
         self.run_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
@@ -295,7 +294,7 @@ class Desktop(QMainWindow):
         if report.exists():
             self.history_view.db_path = self.history_path()
             self.history_view.refresh()
-            self.output.setText(self.output.text() + "\\nOpen History to review the saved scan.")
+            self.output.setText(self.output.text() + "\\nOpen History to check whether this scan was saved.")
         self.proc.deleteLater()
         self.proc = None
 
