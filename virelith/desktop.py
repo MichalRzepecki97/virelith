@@ -11,7 +11,7 @@ from pathlib import Path
 import sys
 from uuid import uuid4
 
-from PySide6.QtCore import QProcess, Qt
+from PySide6.QtCore import QProcess, Qt, QTimer
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
@@ -70,6 +70,9 @@ class Desktop(QMainWindow):
         self.resize(1100, 730)
         self.setMinimumSize(820, 560)
         self.proc: QProcess | None = None
+        self.scan_timer = QTimer(self)
+        self.scan_timer.setSingleShot(True)
+        self.scan_timer.timeout.connect(self.cancel_scan)
 
         root = QWidget()
         row = QHBoxLayout(root)
@@ -149,15 +152,22 @@ class Desktop(QMainWindow):
         choose_file.setObjectName("secondary")
         choose_file.clicked.connect(self.pick_file)
         target_row.addWidget(choose_file)
-        choose_dir = QPushButton("Folder")
-        choose_dir.setObjectName("secondary")
-        choose_dir.clicked.connect(self.pick_dir)
-        target_row.addWidget(choose_dir)
+        # Directory scans intentionally disabled until resource limits and cancellation are hardened.
         inner.addLayout(target_row)
         self.run_button = QPushButton("Run scan")
         self.run_button.setObjectName("primary")
         self.run_button.clicked.connect(self.run_scan)
-        inner.addWidget(self.run_button, alignment=Qt.AlignLeft)
+        self.run_button.setEnabled(False)
+        self.target_input.textChanged.connect(self.target_changed)
+        actions = QHBoxLayout()
+        actions.addWidget(self.run_button)
+        self.cancel_button = QPushButton("Cancel scan")
+        self.cancel_button.setObjectName("secondary")
+        self.cancel_button.setEnabled(False)
+        self.cancel_button.clicked.connect(self.cancel_scan)
+        actions.addWidget(self.cancel_button)
+        actions.addStretch()
+        inner.addLayout(actions)
         self.status = QLabel("No scan running")
         self.status.setObjectName("muted")
         inner.addWidget(self.status)
@@ -179,15 +189,22 @@ class Desktop(QMainWindow):
         if path:
             self.target_input.setText(path)
 
-    def pick_dir(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Select directory")
-        if path:
-            self.target_input.setText(path)
+    def target_changed(self) -> None:
+        self.run_button.setEnabled(self.proc is None and Path(self.target_input.text().strip()).is_file())
+        if self.proc is None:
+            self.status.setText("File selected. Press Run scan to confirm.")
 
     def run_scan(self) -> None:
         path = Path(self.target_input.text().strip())
-        if not path.exists():
-            QMessageBox.warning(self, "No target", "Select an existing file or directory.")
+        if not path.is_file() or path.is_symlink():
+            QMessageBox.warning(self, "Invalid target", "Select a regular file, not a folder or symlink.")
+            return
+        if path.stat().st_size > 5 * 1024 * 1024:
+            QMessageBox.warning(self, "File too large", "GUI preview limits scans to 5 MiB to protect the VM.")
+            return
+        if QMessageBox.question(self, "Confirm scan",
+                f"Scan this file?\\n{path}\\n\\nNo file will be quarantined automatically.",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
             return
         if self.proc is not None:
             return
@@ -200,26 +217,40 @@ class Desktop(QMainWindow):
         self.proc.setArguments(["-m", "virelith.cli", str(path.absolute()),
                                 "--report", str(report), "--history-db", str(history)])
         self.proc.finished.connect(lambda code, _status: self.scan_finished(code, report))
+        self.proc.readyReadStandardOutput.connect(lambda: self.proc.readAllStandardOutput() if self.proc else None)
         self.proc.errorOccurred.connect(self.process_error)
         self.run_button.setEnabled(False)
-        self.status.setText("Scanning…")
+        self.cancel_button.setEnabled(True)
+        self.status.setText("Scanning… (90 second limit)")
+        self.scan_timer.start(90_000)
         self.output.setText("Scanning in a separate process. No files will be quarantined automatically.")
         self.proc.start()
+
+    def cancel_scan(self) -> None:
+        if self.proc is None:
+            return
+        self.scan_timer.stop()
+        self.status.setText("Cancelling scan…")
+        self.proc.kill()
 
     def process_error(self, _error) -> None:
         if self.proc is not None and self.proc.state() == QProcess.NotRunning:
             message = self.proc.errorString()
             self.status.setText("Unable to start scanner")
             self.output.setText(message)
-            self.run_button.setEnabled(True)
+            self.scan_timer.stop()
+            self.cancel_button.setEnabled(False)
+            self.run_button.setEnabled(Path(self.target_input.text().strip()).is_file())
             self.proc.deleteLater()
             self.proc = None
 
     def scan_finished(self, code: int, report: Path) -> None:
         assert self.proc is not None
         stderr = bytes(self.proc.readAllStandardError()).decode(errors="replace")
-        self.run_button.setEnabled(True)
-        self.status.setText("Scan finished" if code in (0, 1, 2) else "Scan failed")
+        self.scan_timer.stop()
+        self.cancel_button.setEnabled(False)
+        self.run_button.setEnabled(Path(self.target_input.text().strip()).is_file())
+        self.status.setText("Scan process exited")
         try:
             data = json.loads(report.read_text(encoding="utf-8"))
             files = data.get("files", [])
