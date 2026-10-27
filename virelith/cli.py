@@ -7,6 +7,8 @@ from pathlib import Path
 import subprocess
 from datetime import datetime, timezone
 
+from .pe_analyzer import analyze_pe
+
 
 def scan_clamav(path: Path, exe: str) -> dict:
     try:
@@ -39,13 +41,14 @@ def scan_yara(path: Path, compiled_rules, max_size: int) -> dict:
 
 
 def scan_one(path: Path, clam_exe: str, rules, max_yara_bytes: int) -> dict:
-    item = {"path": str(path), "sha256": None, "clamav": None, "yara": None}
+    item = {"path": str(path), "sha256": None, "clamav": None, "yara": None, "pe_analysis": None}
     try:
         item["sha256"] = sha256_file(path)
     except OSError as exc:
         item["error"] = str(exc)
         item["verdict"] = "error"
         return item
+    item["pe_analysis"] = analyze_pe(path)
     item["clamav"] = scan_clamav(path, clam_exe)
     item["yara"] = scan_yara(path, rules, max_yara_bytes)
     states = {item["clamav"]["status"], item["yara"]["status"]}
