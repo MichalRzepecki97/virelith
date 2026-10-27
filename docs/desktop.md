@@ -33,3 +33,22 @@ CLI-only actions for benign files. The scanner's default YARA rule is a
 **test rule**, not a trusted production threat detection policy.
 No packaging, signing, installer, progress cancellation, or test-backed
 GUI compatibility claim is made in this PR.
+
+
+## Stability safeguards after first Kali report
+
+- Selecting a file does not trigger a scan; `Run scan` shows a second explicit
+  Yes/No confirmation.
+- The desktop preview accepts **regular single files of at most 5 MiB**. Folder
+  scanning is disabled for the moment.
+- A Cancel button and a 90-second deadline terminate the scan process.
+  On POSIX where supported by Qt, the child starts in its own session and
+  cancellation terminates its process group, including ClamAV.
+- These are containment measures, not a promise of zero resource exhaustion.
+  ClamAV itself can use significant memory even for small files.
+- Please test only harmless files in a disposable VM and verify that no
+  `clamscan` process remains after cancellation.
+
+The initial report mentioned a VM hang, which is not yet conclusively
+diagnosed. The scanner must be profiled under CPU and memory limits before
+re-enabling folder scans or allowing larger files.
