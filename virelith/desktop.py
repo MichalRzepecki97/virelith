@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 from pathlib import Path
 import sys
 from uuid import uuid4
@@ -213,6 +214,9 @@ class Desktop(QMainWindow):
         report = reports / f"desktop-{uuid4().hex}.json"
         history = Path.home() / ".virelith" / "history.sqlite3"
         self.proc = QProcess(self)
+        # On POSIX, create a separate process group so cancelling also stops ClamAV.
+        if os.name == 'posix' and hasattr(self.proc, 'setChildProcessModifier'):
+            self.proc.setChildProcessModifier(os.setsid)
         self.proc.setProgram(sys.executable)
         self.proc.setArguments(["-m", "virelith.cli", str(path.absolute()),
                                 "--report", str(report), "--history-db", str(history)])
@@ -231,6 +235,14 @@ class Desktop(QMainWindow):
             return
         self.scan_timer.stop()
         self.status.setText("Cancelling scan…")
+        if os.name == 'posix' and hasattr(self.proc, 'setChildProcessModifier') and self.proc.processId():
+            try:
+                os.killpg(int(self.proc.processId()), signal.SIGKILL)
+                return
+            except ProcessLookupError:
+                return
+            except OSError:
+                pass
         self.proc.kill()
 
     def process_error(self, _error) -> None:
@@ -250,7 +262,7 @@ class Desktop(QMainWindow):
         self.scan_timer.stop()
         self.cancel_button.setEnabled(False)
         self.run_button.setEnabled(Path(self.target_input.text().strip()).is_file())
-        self.status.setText("Scan process exited")
+        self.status.setText("Scan finished" if report.exists() else "Scan stopped or failed")
         try:
             data = json.loads(report.read_text(encoding="utf-8"))
             files = data.get("files", [])
