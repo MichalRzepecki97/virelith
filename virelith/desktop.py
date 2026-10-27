@@ -12,11 +12,13 @@ from pathlib import Path
 import sys
 from uuid import uuid4
 
-from PySide6.QtCore import QProcess, Qt, QTimer
+from PySide6.QtCore import QProcess, Qt, QTimer, QSettings
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QMessageBox, QPushButton, QStackedWidget, QVBoxLayout, QWidget,
 )
+
+from .desktop_views import HistoryView, QuarantineView, SettingsView
 
 STYLE = """
 QWidget { background: #F7F8F7; color: #24313B; font-family: 'Segoe UI'; font-size: 13px; }
@@ -71,6 +73,7 @@ class Desktop(QMainWindow):
         self.resize(1100, 730)
         self.setMinimumSize(820, 560)
         self.proc: QProcess | None = None
+        self.settings = QSettings("Virelith", "VirelithDesktop")
         self.scan_timer = QTimer(self)
         self.scan_timer.setSingleShot(True)
         self.scan_timer.timeout.connect(self.cancel_scan)
@@ -109,16 +112,26 @@ class Desktop(QMainWindow):
 
         self.stack.addWidget(self.overview_page())
         self.stack.addWidget(self.scan_page())
-        self.stack.addWidget(self.information_page(
-            "History", "Scan history is available through SQLite; the full browser will follow."))
-        self.stack.addWidget(self.information_page(
-            "Quarantine", "Manual quarantine remains a command-line prototype for benign files. "
-            "No automatic isolation or unsafe restore controls are exposed here."))
-        self.stack.addWidget(self.information_page(
-            "Settings", "Engine configuration and update settings will be added in a later release."))
+        self.history_view = HistoryView(self.history_path())
+        self.quarantine_view = QuarantineView(self.quarantine_path())
+        self.stack.addWidget(self.history_view)
+        self.stack.addWidget(self.quarantine_view)
+        self.stack.addWidget(SettingsView(self.settings))
         self.change_page(0)
 
+    def history_path(self) -> Path:
+        return Path(str(self.settings.value('history_db', Path.home() / '.virelith' / 'history.sqlite3'))).expanduser()
+
+    def quarantine_path(self) -> Path:
+        return Path(str(self.settings.value('quarantine_store', Path.home() / '.virelith' / 'quarantine'))).expanduser()
+
     def change_page(self, index: int) -> None:
+        if index == 2:
+            self.history_view.db_path = self.history_path()
+            self.history_view.refresh()
+        elif index == 3:
+            self.quarantine_view.store = self.quarantine_path()
+            self.quarantine_view.refresh()
         self.stack.setCurrentIndex(index)
         for i, button in enumerate(self.nav_buttons):
             button.setChecked(i == index)
@@ -142,7 +155,7 @@ class Desktop(QMainWindow):
         return widget
 
     def scan_page(self) -> QWidget:
-        widget, layout = page("New scan", "Choose a local file or directory. The existing CLI performs the scan.")
+        widget, layout = page("New scan", "Choose one local file, then explicitly confirm the scan.")
         card, inner = panel()
         inner.addWidget(QLabel("SCAN TARGET"))
         target_row = QHBoxLayout()
@@ -212,16 +225,23 @@ class Desktop(QMainWindow):
         reports = Path.home() / ".virelith" / "reports"
         reports.mkdir(parents=True, exist_ok=True)
         report = reports / f"desktop-{uuid4().hex}.json"
-        history = Path.home() / ".virelith" / "history.sqlite3"
+        history = self.history_path()
+        history.parent.mkdir(parents=True, exist_ok=True)
         self.proc = QProcess(self)
         # On POSIX, create a separate process group so cancelling also stops ClamAV.
         if os.name == 'posix' and hasattr(self.proc, 'setChildProcessModifier'):
             self.proc.setChildProcessModifier(os.setsid)
         self.proc.setProgram(sys.executable)
-        self.proc.setArguments(["-m", "virelith.cli", str(path.absolute()),
-                                "--report", str(report), "--history-db", str(history)])
+        arguments = ["-m", "virelith.cli", str(path.absolute()),
+                     "--report", str(report), "--history-db", str(history),
+                     "--clam", str(self.settings.value("clam", "clamscan"))]
+        rule_store = str(self.settings.value("rule_store", "")).strip()
+        if rule_store:
+            arguments.extend(["--rule-store", str(Path(rule_store).expanduser())])
+        self.proc.setArguments(arguments)
         self.proc.finished.connect(lambda code, _status: self.scan_finished(code, report))
         self.proc.readyReadStandardOutput.connect(lambda: self.proc.readAllStandardOutput() if self.proc else None)
+        self.proc.readyReadStandardError.connect(lambda: self.proc.readAllStandardError() if False else None)
         self.proc.errorOccurred.connect(self.process_error)
         self.run_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
@@ -272,6 +292,10 @@ class Desktop(QMainWindow):
                                 + (f"Details: {stderr[-1200:]}" if stderr else ""))
         except (OSError, ValueError):
             self.output.setText(f"No valid scan report produced. Exit code: {code}\n{stderr[-1200:]}")
+        if report.exists():
+            self.history_view.db_path = self.history_path()
+            self.history_view.refresh()
+            self.output.setText(self.output.text() + "\\nOpen History to review the saved scan.")
         self.proc.deleteLater()
         self.proc = None
 
