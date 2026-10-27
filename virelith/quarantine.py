@@ -41,10 +41,17 @@ def quarantine_file(source: Path, store: Path, *, confirmed: bool = False) -> di
     try:
         source = source.absolute()
         store = store.absolute()
-        if source.is_symlink() or not stat.S_ISREG(source.lstat().st_mode):
+        source_stat = source.lstat()
+        if source.is_symlink() or not stat.S_ISREG(source_stat.st_mode):
             raise ValueError("only regular non-symlink files are supported")
+        if source_stat.st_nlink != 1:
+            raise ValueError("hard-linked files cannot be safely quarantined")
+        if any(parent.is_symlink() for parent in source.parents if parent.exists()):
+            raise ValueError("source parent symlink rejected")
         if source == store or store in source.parents or source in store.parents:
             raise ValueError("source and store must be separate")
+        if any(parent.is_symlink() for parent in (store, *store.parents) if parent.exists()):
+            raise ValueError("store parent symlink rejected")
         if source.stat().st_dev != store.parent.stat().st_dev:
             raise ValueError("store must be on the same filesystem")
         digest = _hash(source)
@@ -94,8 +101,13 @@ def restore_file(item_id: str, store: Path, *, confirmed: bool = False) -> dict:
             original, digest, _ = row
             source = store / (item_id + ".bin")
             target = Path(original)
-            if source.is_symlink() or not stat.S_ISREG(source.lstat().st_mode):
+            source_stat = source.lstat()
+            if source.is_symlink() or not stat.S_ISREG(source_stat.st_mode):
                 raise ValueError("invalid stored file")
+            if source_stat.st_nlink != 1:
+                raise ValueError("hard-linked quarantine entry rejected")
+            if any(parent.is_symlink() for parent in target.parents if parent.exists()):
+                raise ValueError("restore parent symlink rejected")
             if _hash(source) != digest:
                 raise ValueError("stored file checksum mismatch")
             if target.exists() or target.is_symlink():
