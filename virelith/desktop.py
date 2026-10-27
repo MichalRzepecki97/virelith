@@ -9,6 +9,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from uuid import uuid4
 
 from PySide6.QtCore import QProcess, Qt
 from PySide6.QtWidgets import (
@@ -192,7 +193,7 @@ class Desktop(QMainWindow):
             return
         reports = Path.home() / ".virelith" / "reports"
         reports.mkdir(parents=True, exist_ok=True)
-        report = reports / "desktop-latest.json"
+        report = reports / f"desktop-{uuid4().hex}.json"
         history = Path.home() / ".virelith" / "history.sqlite3"
         self.proc = QProcess(self)
         self.proc.setProgram(sys.executable)
