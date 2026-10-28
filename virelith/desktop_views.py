@@ -20,6 +20,9 @@ class HistoryView(QWidget):
         self.db_path = db_path
         self.scans = []
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(32, 28, 32, 28)
+        layout.setSpacing(15)
+        layout.addWidget(QLabel("VIRELITH  /  HISTORY"))
         title = QLabel("Scan history")
         title.setStyleSheet("font-size: 25px; font-weight: 600;")
         layout.addWidget(title)
@@ -105,6 +108,9 @@ class QuarantineView(QWidget):
         self.store = store
         self.entries = []
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(32, 28, 32, 28)
+        layout.setSpacing(15)
+        layout.addWidget(QLabel("VIRELITH  /  QUARANTINE"))
         heading = QLabel("Quarantine")
         heading.setStyleSheet("font-size: 25px; font-weight: 600;")
         layout.addWidget(heading)
@@ -188,7 +194,12 @@ class SettingsView(QWidget):
         super().__init__()
         self.settings = settings
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Settings — local scanner configuration"))
+        layout.setContentsMargins(32, 28, 32, 28)
+        layout.setSpacing(15)
+        layout.addWidget(QLabel("VIRELITH  /  SETTINGS"))
+        heading = QLabel("Application settings")
+        heading.setStyleSheet("font-size: 25px; font-weight: 600;")
+        layout.addWidget(heading)
         form = QFormLayout()
         self.clam = QLineEdit(str(settings.value("clam", "clamscan")))
         self.rules = QLineEdit(str(settings.value("rule_store", "")))
