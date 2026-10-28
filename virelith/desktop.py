@@ -336,8 +336,12 @@ class Desktop(QMainWindow):
                 pass
         self.proc.kill()
 
-    def process_error(self, _error) -> None:
-        if self.proc is not None and self.proc.state() == QProcess.NotRunning:
+    def process_error(self, error) -> None:
+        # A deliberate kill generates QProcess.Crashed and is followed by finished.
+        # Never dispose the process here: scan_finished owns its cleanup.
+        if error != QProcess.FailedToStart:
+            return
+        if self.proc is not None:
             message = self.proc.errorString()
             self.status.setText("Unable to start scanner")
             self.output.setText(message)
@@ -351,7 +355,8 @@ class Desktop(QMainWindow):
             self.target_changed()
 
     def scan_finished(self, code: int, report: Path) -> None:
-        assert self.proc is not None
+        if self.proc is None:
+            return
         stderr = bytes(self.proc.readAllStandardError()).decode(errors="replace")
         self.scan_timer.stop()
         self.cancel_button.setEnabled(False)
@@ -364,6 +369,7 @@ class Desktop(QMainWindow):
             self.proc.deleteLater()
             self.proc = None
             self.target_changed()
+            self.status.setText("Time limit exceeded" if self.scan_timed_out else "Scan cancelled")
             return
         self.status.setText("Scan report created" if report.exists() else "Scan failed · No report")
         try:
