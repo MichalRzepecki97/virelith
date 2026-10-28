@@ -22,7 +22,7 @@ QPushButton#primary {
 }
 QPushButton#primary:hover { background: #215946; }
 QPushButton#primary:disabled { background: #A9B8B2; border-color: #A9B8B2; }
-QPushButton#secondary, QPushButton:not(#primary):not(#sidebar) {
+QPushButton#secondary {
  background: #FFFFFF; color: #263B43; border: 1px solid #CBD8D3;
 }
 QPushButton#secondary:hover { background: #EFF4F1; }
