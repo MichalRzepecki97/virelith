@@ -384,12 +384,13 @@ class Desktop(QMainWindow):
         self.choose_folder_button.setEnabled(True)
         if self.scan_cancelled:
             self.status.setText("Scan stopped — no progress" if self.scan_stalled else ("Time limit exceeded" if self.scan_timed_out else "Scan cancelled"))
-            self.output.setText(
-                f"The scan exceeded its {self.scan_timeout_seconds}-second time limit. "
-                "No clean verdict was issued. Try a smaller folder.\n"
-                if self.scan_timed_out else
-                "Scan cancelled by user. No clean verdict was issued.\n"
-            )
+            if self.scan_stalled:
+                message = "No file completed within 210 seconds. Scan stopped; no clean verdict was issued."
+            elif self.scan_timed_out:
+                message = f"Scan exceeded the {self.scan_timeout_seconds}-second limit. No clean verdict was issued."
+            else:
+                message = "Scan cancelled by user. No clean verdict was issued."
+            self.output.setText(message)
             self.proc.deleteLater()
             self.proc = None
             self.run_button.setEnabled(bool(self.target_input.text().strip()) and not Path(self.target_input.text().strip()).is_symlink() and (Path(self.target_input.text().strip()).is_file() or Path(self.target_input.text().strip()).is_dir()))
