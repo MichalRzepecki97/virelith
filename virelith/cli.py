@@ -174,9 +174,11 @@ def main():
         except (OSError, ValueError, __import__("sqlite3").Error) as exc:
             print(f"History save failed: {exc}", file=__import__("sys").stderr)
             return 2
+    if traversal_error:
+        return 2
     if any(r["verdict"] == "detection" for r in results):
         return 1
-    if traversal_error or not results or any(r["verdict"] != "no_detection" for r in results):
+    if not results or any(r["verdict"] != "no_detection" for r in results):
         return 2
     return 0
 
