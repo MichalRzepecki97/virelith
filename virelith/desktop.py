@@ -346,9 +346,9 @@ class Desktop(QMainWindow):
             self.target_input.setEnabled(True)
             self.choose_file_button.setEnabled(True)
             self.choose_folder_button.setEnabled(True)
-            self.target_changed()
             self.proc.deleteLater()
             self.proc = None
+            self.target_changed()
 
     def scan_finished(self, code: int, report: Path) -> None:
         assert self.proc is not None
@@ -358,12 +358,12 @@ class Desktop(QMainWindow):
         self.target_input.setEnabled(True)
         self.choose_file_button.setEnabled(True)
         self.choose_folder_button.setEnabled(True)
-        self.target_changed()
         if self.scan_cancelled:
             self.status.setText("Time limit exceeded" if self.scan_timed_out else "Scan cancelled")
             self.output.setText("Scan was interrupted; results may be incomplete. No report has been trusted.")
             self.proc.deleteLater()
             self.proc = None
+            self.target_changed()
             return
         self.status.setText("Scan report created" if report.exists() else "Scan failed · No report")
         try:
@@ -392,6 +392,7 @@ class Desktop(QMainWindow):
             self.change_page(2)
         self.proc.deleteLater()
         self.proc = None
+        self.target_changed()
 
 
 def main() -> int:
