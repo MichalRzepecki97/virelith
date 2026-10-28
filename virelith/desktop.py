@@ -173,7 +173,7 @@ class Desktop(QMainWindow):
 
         card, inner = panel()
         inner.addWidget(QLabel("FILE SELECTION"))
-        hint = QLabel("Select one file to analyze · Up to 5 MiB · No automatic quarantine")
+        hint = QLabel("File: up to 5 MiB · Folder: up to 500 files / 256 MiB / 8 levels · No automatic quarantine")
         hint.setStyleSheet("color:#9CB6BA; font-size:12px;")
         inner.addWidget(hint)
         target_row = QHBoxLayout()
@@ -184,7 +184,12 @@ class Desktop(QMainWindow):
         choose_file.setObjectName("secondary")
         choose_file.clicked.connect(self.pick_file)
         target_row.addWidget(choose_file)
+        folder_button = QPushButton("Browse folder")
+        folder_button.setObjectName("secondary")
+        folder_button.clicked.connect(self.pick_folder)
+        target_row.addWidget(folder_button)
         inner.addLayout(target_row)
+        self.choose_folder_button = folder_button
         self.choose_file_button = choose_file
         self.target_input.textChanged.connect(self.target_changed)
         layout.addWidget(card)
@@ -195,7 +200,7 @@ class Desktop(QMainWindow):
         engine_hint.setWordWrap(True)
         engine_hint.setStyleSheet("color:#ABC5C4;")
         engine_layout.addWidget(engine_hint)
-        limitations = QLabel("Folder and drive scans are unavailable in this preview.")
+        limitations = QLabel("Folder scans have resource limits; drive-wide scans remain unavailable.")
         limitations.setStyleSheet("color:#93ADB4; font-size:12px;")
         engine_layout.addWidget(limitations)
         layout.addWidget(engines)
@@ -237,17 +242,23 @@ class Desktop(QMainWindow):
         if path:
             self.target_input.setText(path)
 
+    def pick_folder(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Select folder")
+        if path:
+            self.target_input.setText(path)
+
     def target_changed(self) -> None:
-        self.run_button.setEnabled(self.proc is None and Path(self.target_input.text().strip()).is_file())
+        path = Path(self.target_input.text().strip())
+        self.run_button.setEnabled(self.proc is None and bool(self.target_input.text().strip()) and not path.is_symlink() and (path.is_file() or path.is_dir()))
         if self.proc is None:
-            self.status.setText("Ready · Press Run scan to confirm." if self.target_input.text().strip() else "Ready · Select a file to begin")
+            self.status.setText("Ready · Press Start scan to begin." if self.target_input.text().strip() else "Ready · Select a file to begin")
 
     def run_scan(self) -> None:
         path = Path(self.target_input.text().strip())
-        if not path.is_file() or path.is_symlink():
-            QMessageBox.warning(self, "Invalid target", "Select a regular file, not a folder or symlink.")
+        if path.is_symlink() or not (path.is_file() or path.is_dir()):
+            QMessageBox.warning(self, "Invalid target", "Select a regular file or folder, not a symlink.")
             return
-        if path.stat().st_size > 5 * 1024 * 1024:
+        if path.is_file() and path.stat().st_size > 5 * 1024 * 1024:
             QMessageBox.warning(self, "File too large", "GUI preview limits scans to 5 MiB to protect the VM.")
             return
         if self.proc is not None:
@@ -259,6 +270,7 @@ class Desktop(QMainWindow):
         history.parent.mkdir(parents=True, exist_ok=True)
         self.scan_cancelled = False
         self.scan_timed_out = False
+        self._progress_buffer = ""
         self.proc = QProcess(self)
         # On POSIX, create a separate process group so cancelling also stops ClamAV.
         if os.name == 'posix' and hasattr(self.proc, 'setChildProcessModifier'):
@@ -272,16 +284,35 @@ class Desktop(QMainWindow):
             arguments.extend(["--rule-store", str(Path(rule_store).expanduser())])
         self.proc.setArguments(arguments)
         self.proc.finished.connect(lambda code, _status: self.scan_finished(code, report))
-        self.proc.readyReadStandardOutput.connect(lambda: self.proc.readAllStandardOutput() if self.proc else None)
+        self.proc.readyReadStandardOutput.connect(self.read_scan_progress)
         self.proc.errorOccurred.connect(self.process_error)
         self.run_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
         self.target_input.setEnabled(False)
         self.choose_file_button.setEnabled(False)
-        self.status.setText("Scanning · Processing file (up to 90 seconds)")
+        self.choose_folder_button.setEnabled(False)
+        self.status.setText("Scanning · Processing selected target (up to 90 seconds)")
         self.scan_timer.start(90_000)
         self.output.setText("Scan in progress. You can cancel this operation.\nNo automatic quarantine.")
         self.proc.start()
+
+    def read_scan_progress(self) -> None:
+        if self.proc is None:
+            return
+        self._progress_buffer = getattr(self, "_progress_buffer", "") + bytes(
+            self.proc.readAllStandardOutput()).decode("utf-8", errors="replace")
+        lines = self._progress_buffer.split("\n")
+        self._progress_buffer = lines.pop()
+        for line in lines:
+            if line.startswith("VIRELITH_PROGRESS "):
+                try:
+                    progress = json.loads(line[len("VIRELITH_PROGRESS "):])
+                    self.status.setText(
+                        f"Scanning · {int(progress['processed'])} files processed · "
+                        f"{int(progress['detections'])} detections"
+                    )
+                except (ValueError, KeyError, TypeError):
+                    pass
 
     def timeout_scan(self) -> None:
         if self.proc is not None:
@@ -314,7 +345,8 @@ class Desktop(QMainWindow):
             self.cancel_button.setEnabled(False)
             self.target_input.setEnabled(True)
             self.choose_file_button.setEnabled(True)
-            self.run_button.setEnabled(Path(self.target_input.text().strip()).is_file())
+            self.choose_folder_button.setEnabled(True)
+            self.target_changed()
             self.proc.deleteLater()
             self.proc = None
 
@@ -325,14 +357,15 @@ class Desktop(QMainWindow):
         self.cancel_button.setEnabled(False)
         self.target_input.setEnabled(True)
         self.choose_file_button.setEnabled(True)
-        self.run_button.setEnabled(Path(self.target_input.text().strip()).is_file())
+        self.choose_folder_button.setEnabled(True)
+        self.target_changed()
         if self.scan_cancelled:
             self.status.setText("Time limit exceeded" if self.scan_timed_out else "Scan cancelled")
             self.output.setText("Scan was interrupted; results may be incomplete. No report has been trusted.")
             self.proc.deleteLater()
             self.proc = None
             return
-        self.status.setText("Scan completed" if report.exists() else "Scan failed · No report")
+        self.status.setText("Scan report created" if report.exists() else "Scan failed · No report")
         try:
             data = json.loads(report.read_text(encoding="utf-8"))
             files = data.get("files", [])
@@ -345,6 +378,8 @@ class Desktop(QMainWindow):
             except Exception as exc:
                 history_note = f"WARNING: cannot read history: {exc}"
             self.results_view.set_report(data)
+            if not data.get("complete", True):
+                self.status.setText("Incomplete scan · Directory limit reached")
             self.output.setText(f"Files analyzed: {len(files)}   ·   Detections: {detections}\n"
                                 f"Report: {report}\nHistory: {history_note}\nExit code: {code}\n"
                                 + (f"Details: {stderr[-1200:]}" if stderr else ""))
