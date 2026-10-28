@@ -126,7 +126,8 @@ class ResultsView(QWidget):
         details_layout.addLayout(digest_row)
         layout.addWidget(details_card)
 
-        self.advanced_button = QPushButton("Show technical analysis")\n        self.advanced_button.setEnabled(False)
+        self.advanced_button = QPushButton("Show technical analysis")
+        self.advanced_button.setEnabled(False)
         self.advanced_button.setObjectName("secondary")
         self.advanced_button.setCheckable(True)
         self.advanced_button.toggled.connect(self.toggle_advanced)
