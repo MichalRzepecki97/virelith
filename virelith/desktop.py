@@ -64,6 +64,10 @@ class Desktop(QMainWindow):
         self.scan_timer = QTimer(self)
         self.scan_timer.setSingleShot(True)
         self.scan_timer.timeout.connect(self.timeout_scan)
+        self.progress_timer = QTimer(self)
+        self.progress_timer.setSingleShot(True)
+        self.progress_timer.timeout.connect(self.stalled_scan)
+        self.scan_stalled = False
 
         root = QWidget()
         row = QHBoxLayout(root)
@@ -271,6 +275,7 @@ class Desktop(QMainWindow):
         history.parent.mkdir(parents=True, exist_ok=True)
         self.scan_cancelled = False
         self.scan_timed_out = False
+        self.scan_stalled = False
         self.scan_timeout_seconds = 600 if path.is_dir() else 90
         self._progress_buffer = ""
         self.proc = QProcess(self)
@@ -295,6 +300,8 @@ class Desktop(QMainWindow):
         self.choose_folder_button.setEnabled(False)
         self.status.setText(f"Scanning · Time limit: {self.scan_timeout_seconds // 60}m {self.scan_timeout_seconds % 60:02d}s")
         self.scan_timer.start(self.scan_timeout_seconds * 1000)
+        if path.is_dir():
+            self.progress_timer.start(210_000)
         self.output.setText("Scan in progress. You can cancel this operation.\nNo automatic quarantine.")
         self.proc.start()
 
@@ -309,12 +316,19 @@ class Desktop(QMainWindow):
             if line.startswith("VIRELITH_PROGRESS "):
                 try:
                     progress = json.loads(line[len("VIRELITH_PROGRESS "):])
+                    if self.progress_timer.isActive():
+                        self.progress_timer.start(210_000)
                     self.status.setText(
                         f"Scanning · {int(progress['processed'])} files processed · "
                         f"{int(progress['detections'])} detections"
                     )
                 except (ValueError, KeyError, TypeError):
                     pass
+
+    def stalled_scan(self) -> None:
+        if self.proc is not None and not self.scan_cancelled:
+            self.scan_stalled = True
+            self.cancel_scan()
 
     def timeout_scan(self) -> None:
         if self.proc is not None:
@@ -326,8 +340,9 @@ class Desktop(QMainWindow):
             return
         self.scan_cancelled = True
         self.scan_timer.stop()
+        self.progress_timer.stop()
         self.cancel_button.setEnabled(False)
-        self.status.setText("Scan time limit reached · Stopping safely" if self.scan_timed_out else "Cancelling scan…")
+        self.status.setText("No progress · Stopping scan" if self.scan_stalled else ("Time limit reached · Stopping scan" if self.scan_timed_out else "Cancelling scan…"))
         if os.name == 'posix' and hasattr(self.proc, 'setChildProcessModifier') and self.proc.processId():
             try:
                 os.killpg(int(self.proc.processId()), signal.SIGKILL)
@@ -348,6 +363,7 @@ class Desktop(QMainWindow):
             self.status.setText("Unable to start scanner")
             self.output.setText(message)
             self.scan_timer.stop()
+            self.progress_timer.stop()
             self.cancel_button.setEnabled(False)
             self.target_input.setEnabled(True)
             self.choose_file_button.setEnabled(True)
@@ -361,12 +377,13 @@ class Desktop(QMainWindow):
             return
         stderr = bytes(self.proc.readAllStandardError()).decode(errors="replace")
         self.scan_timer.stop()
+        self.progress_timer.stop()
         self.cancel_button.setEnabled(False)
         self.target_input.setEnabled(True)
         self.choose_file_button.setEnabled(True)
         self.choose_folder_button.setEnabled(True)
         if self.scan_cancelled:
-            self.status.setText("Scan stopped — time limit reached" if self.scan_timed_out else "Scan cancelled")
+            self.status.setText("Scan stopped — no progress" if self.scan_stalled else ("Time limit exceeded" if self.scan_timed_out else "Scan cancelled"))
             self.output.setText(
                 f"The scan exceeded its {self.scan_timeout_seconds}-second time limit. "
                 "No clean verdict was issued. Try a smaller folder.\n"
@@ -375,8 +392,7 @@ class Desktop(QMainWindow):
             )
             self.proc.deleteLater()
             self.proc = None
-            self.target_changed()
-            self.status.setText("Time limit exceeded" if self.scan_timed_out else "Scan cancelled")
+            self.run_button.setEnabled(bool(self.target_input.text().strip()) and not Path(self.target_input.text().strip()).is_symlink() and (Path(self.target_input.text().strip()).is_file() or Path(self.target_input.text().strip()).is_dir()))
             return
         self.status.setText("Scan report created" if report.exists() else "Scan failed · No report")
         try:
@@ -405,7 +421,7 @@ class Desktop(QMainWindow):
             self.change_page(2)
         self.proc.deleteLater()
         self.proc = None
-        self.target_changed()
+        self.run_button.setEnabled(bool(self.target_input.text().strip()) and not Path(self.target_input.text().strip()).is_symlink() and (Path(self.target_input.text().strip()).is_file() or Path(self.target_input.text().strip()).is_dir()))
 
 
 def main() -> int:
