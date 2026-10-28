@@ -10,7 +10,9 @@ def summarize_report(report: dict) -> dict:
     for item in files:
         verdict = item.get("verdict", "incomplete") if isinstance(item, dict) else "incomplete"
         counts[verdict if verdict in counts else "incomplete"] += 1
-    status = ("Detection reported" if counts["detection"] else
+    status = ("Scan incomplete — detections present" if report.get("complete") is False and counts["detection"] else
+              "Scan incomplete" if report.get("complete") is False else
+              "Detection reported" if counts["detection"] else
               "Scan incomplete" if counts["incomplete"] or counts["error"] else
               "No detection reported")
     return {"status": status, "counts": counts, "total": len(files)}
