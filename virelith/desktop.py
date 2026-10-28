@@ -124,11 +124,16 @@ class Desktop(QMainWindow):
         self.results_view = ResultsView()
         self.stack.addWidget(self.results_view)
         self.history_view = HistoryView(self.history_path())
+        self.history_view.report_selected.connect(self.open_history_report)
         self.quarantine_view = QuarantineView(self.quarantine_path())
         self.stack.addWidget(self.history_view)
         self.stack.addWidget(self.quarantine_view)
         self.stack.addWidget(SettingsView(self.settings))
         self.change_page(0)
+
+    def open_history_report(self, report: dict) -> None:
+        self.results_view.set_report(report)
+        self.change_page(2)
 
     def history_path(self) -> Path:
         return Path(str(self.settings.value('history_db', Path.home() / '.virelith' / 'history.sqlite3'))).expanduser()
