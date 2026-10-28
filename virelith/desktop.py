@@ -76,10 +76,12 @@ class Desktop(QMainWindow):
         self.resize(1100, 730)
         self.setMinimumSize(820, 560)
         self.proc: QProcess | None = None
+        self.scan_cancelled = False
+        self.scan_timed_out = False
         self.settings = QSettings("Virelith", "VirelithDesktop")
         self.scan_timer = QTimer(self)
         self.scan_timer.setSingleShot(True)
-        self.scan_timer.timeout.connect(self.cancel_scan)
+        self.scan_timer.timeout.connect(self.timeout_scan)
 
         root = QWidget()
         row = QHBoxLayout(root)
@@ -174,7 +176,7 @@ class Desktop(QMainWindow):
         inner.addWidget(QLabel("SCAN TARGET"))
         target_row = QHBoxLayout()
         self.target_input = QLineEdit()
-        self.target_input.setPlaceholderText("Choose a file or directory…")
+        self.target_input.setPlaceholderText("Choose one file (maximum 5 MiB)…")
         target_row.addWidget(self.target_input, 1)
         choose_file = QPushButton("File")
         choose_file.setObjectName("secondary")
@@ -196,7 +198,7 @@ class Desktop(QMainWindow):
         actions.addWidget(self.cancel_button)
         actions.addStretch()
         inner.addLayout(actions)
-        self.status = QLabel("No scan running")
+        self.status = QLabel("Ready · Select a file to begin")
         self.status.setObjectName("muted")
         inner.addWidget(self.status)
         self.output = QLabel("Results will appear here after the scan completes.")
@@ -220,7 +222,7 @@ class Desktop(QMainWindow):
     def target_changed(self) -> None:
         self.run_button.setEnabled(self.proc is None and Path(self.target_input.text().strip()).is_file())
         if self.proc is None:
-            self.status.setText("File selected. Press Run scan to confirm.")
+            self.status.setText("Ready · Press Run scan to confirm." if self.target_input.text().strip() else "Ready · Select a file to begin")
 
     def run_scan(self) -> None:
         path = Path(self.target_input.text().strip())
@@ -241,6 +243,8 @@ class Desktop(QMainWindow):
         report = reports / f"desktop-{uuid4().hex}.json"
         history = self.history_path()
         history.parent.mkdir(parents=True, exist_ok=True)
+        self.scan_cancelled = False
+        self.scan_timed_out = False
         self.proc = QProcess(self)
         # On POSIX, create a separate process group so cancelling also stops ClamAV.
         if os.name == 'posix' and hasattr(self.proc, 'setChildProcessModifier'):
@@ -258,16 +262,24 @@ class Desktop(QMainWindow):
         self.proc.errorOccurred.connect(self.process_error)
         self.run_button.setEnabled(False)
         self.cancel_button.setEnabled(True)
-        self.status.setText("Scanning… (90 second limit)")
+        self.target_input.setEnabled(False)
+        self.status.setText("Scanning · Processing file (up to 90 seconds)")
         self.scan_timer.start(90_000)
-        self.output.setText("Scanning in a separate process. No files will be quarantined automatically.")
+        self.output.setText("Scan in progress. You can cancel this operation.\nNo automatic quarantine.")
         self.proc.start()
+
+    def timeout_scan(self) -> None:
+        if self.proc is not None:
+            self.scan_timed_out = True
+            self.cancel_scan()
 
     def cancel_scan(self) -> None:
         if self.proc is None:
             return
+        self.scan_cancelled = True
         self.scan_timer.stop()
-        self.status.setText("Cancelling scan…")
+        self.cancel_button.setEnabled(False)
+        self.status.setText("Time limit reached · Stopping scan" if self.scan_timed_out else "Cancelling scan…")
         if os.name == 'posix' and hasattr(self.proc, 'setChildProcessModifier') and self.proc.processId():
             try:
                 os.killpg(int(self.proc.processId()), signal.SIGKILL)
@@ -285,6 +297,7 @@ class Desktop(QMainWindow):
             self.output.setText(message)
             self.scan_timer.stop()
             self.cancel_button.setEnabled(False)
+            self.target_input.setEnabled(True)
             self.run_button.setEnabled(Path(self.target_input.text().strip()).is_file())
             self.proc.deleteLater()
             self.proc = None
@@ -294,8 +307,15 @@ class Desktop(QMainWindow):
         stderr = bytes(self.proc.readAllStandardError()).decode(errors="replace")
         self.scan_timer.stop()
         self.cancel_button.setEnabled(False)
+        self.target_input.setEnabled(True)
         self.run_button.setEnabled(Path(self.target_input.text().strip()).is_file())
-        self.status.setText("Scan finished" if report.exists() else "Scan stopped or failed")
+        if self.scan_cancelled:
+            self.status.setText("Time limit exceeded" if self.scan_timed_out else "Scan cancelled")
+            self.output.setText("Scan was interrupted; results may be incomplete. No report has been trusted.")
+            self.proc.deleteLater()
+            self.proc = None
+            return
+        self.status.setText("Scan completed" if report.exists() else "Scan failed · No report")
         try:
             data = json.loads(report.read_text(encoding="utf-8"))
             files = data.get("files", [])
@@ -313,7 +333,7 @@ class Desktop(QMainWindow):
                                 + (f"Details: {stderr[-1200:]}" if stderr else ""))
         except (OSError, ValueError):
             self.output.setText(f"No valid scan report produced. Exit code: {code}\n{stderr[-1200:]}")
-        if report.exists():
+        if report.exists() and not self.scan_cancelled:
             self.history_view.db_path = self.history_path()
             self.history_view.refresh()
             self.output.setText(self.output.text() + "\nOpen Results to inspect this scan.")
