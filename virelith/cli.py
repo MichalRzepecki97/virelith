@@ -154,7 +154,8 @@ def main():
                                 max_depth=args.max_depth, max_total_mb=args.max_total_mb):
             result = scan_one(path, args.clam, compiled, args.max_yara_mb * 1024 * 1024)
             results.append(result)
-            print(f"{result['verdict']:>12} {path}")
+            print(f"{result['verdict']:>12} {path}", flush=True)
+            print("VIRELITH_PROGRESS " + json.dumps({"processed": len(results), "detections": sum(r["verdict"] == "detection" for r in results)}), flush=True)
     except FileNotFoundError:
         parser.error(f"Target not found: {args.target}")
     except (ScanLimitExceeded, ValueError, OSError) as exc:
