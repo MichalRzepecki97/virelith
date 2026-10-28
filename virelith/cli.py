@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import threading
+import time
 from datetime import datetime, timezone
 
 from .pe_analyzer import analyze_pe
@@ -118,6 +120,37 @@ def files_under(target: Path, *, max_files=500, max_depth=8, max_total_mb=256):
         raise FileNotFoundError(str(target))
 
 
+def save_report_atomic(path: Path, payload: dict) -> None:
+    """Replace the checkpoint atomically in the report directory."""
+    import tempfile
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                         prefix=".virelith-", suffix=".json",
+                                         delete=False) as stream:
+            tmp = Path(stream.name)
+            json.dump(payload, stream, indent=2, ensure_ascii=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(tmp, path)
+    finally:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
+
+
+def heartbeat_until(stop: threading.Event, interval: float = 20.0) -> None:
+    """Liveness signal, NOT evidence a scan made progress."""
+    while not stop.wait(interval):
+        print("VIRELITH_HEARTBEAT " + json.dumps({"monotonic": time.monotonic()}), flush=True)
+
+
+def report_payload(args, results, metadata, *, complete=False, error=None):
+    return {"schema": 1, "created_utc": args.created_utc,
+            "target": str(args.target), "yara_rules": metadata,
+            "files": list(results), "traversal_error": error, "complete": complete}
+
+
 def main():
     parser = argparse.ArgumentParser(description="Virelith MVP local scanner")
     parser.add_argument("target", type=Path, help="file or directory")
@@ -149,24 +182,28 @@ def main():
         parser.error(f"Cannot compile rules: {exc}")
     results = []
     traversal_error = None
+    args.created_utc = datetime.now(timezone.utc).isoformat()
+    save_report_atomic(args.report, report_payload(args, results, rule_metadata))
+    heartbeat_stop = threading.Event()
+    heartbeat_thread = threading.Thread(target=heartbeat_until, args=(heartbeat_stop,), daemon=True)
+    heartbeat_thread.start()
     try:
         for path in files_under(args.target, max_files=args.max_files,
                                 max_depth=args.max_depth, max_total_mb=args.max_total_mb):
             result = scan_one(path, args.clam, compiled, args.max_yara_mb * 1024 * 1024)
             results.append(result)
+            save_report_atomic(args.report, report_payload(args, results, rule_metadata))
             print(f"{result['verdict']:>12} {path}", flush=True)
             print("VIRELITH_PROGRESS " + json.dumps({"processed": len(results), "detections": sum(r["verdict"] == "detection" for r in results)}), flush=True)
     except FileNotFoundError:
-        parser.error(f"Target not found: {args.target}")
+        traversal_error = f"Target not found: {args.target}"
     except (ScanLimitExceeded, ValueError, OSError) as exc:
         traversal_error = str(exc)
         print(f"Scan incomplete: {exc}", file=__import__("sys").stderr)
-    payload = {"schema": 1, "created_utc": datetime.now(timezone.utc).isoformat(),
-               "target": str(args.target), "yara_rules": rule_metadata, "files": results,
-               "traversal_error": traversal_error,
-               "complete": traversal_error is None}
-    args.report.parent.mkdir(parents=True, exist_ok=True)
-    args.report.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    heartbeat_stop.set()
+    heartbeat_thread.join(timeout=1)
+    payload = report_payload(args, results, rule_metadata, complete=traversal_error is None, error=traversal_error)
+    save_report_atomic(args.report, payload)
     print(f"Report: {args.report.resolve()}")
     if args.history_db is not None:
         try:
