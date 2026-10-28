@@ -278,6 +278,7 @@ class Desktop(QMainWindow):
         self.scan_stalled = False
         self.scan_timeout_seconds = 600 if path.is_dir() else 90
         self._progress_buffer = ""
+        self._active_report = report
         self.proc = QProcess(self)
         # On POSIX, create a separate process group so cancelling also stops ClamAV.
         if os.name == 'posix' and hasattr(self.proc, 'setChildProcessModifier'):
@@ -313,6 +314,10 @@ class Desktop(QMainWindow):
         lines = self._progress_buffer.split("\n")
         self._progress_buffer = lines.pop()
         for line in lines:
+            if line.startswith("VIRELITH_HEARTBEAT "):
+                if self.progress_timer.isActive():
+                    self.progress_timer.start(210_000)
+                continue
             if line.startswith("VIRELITH_PROGRESS "):
                 try:
                     progress = json.loads(line[len("VIRELITH_PROGRESS "):])
@@ -390,6 +395,13 @@ class Desktop(QMainWindow):
                 message = f"Scan exceeded the {self.scan_timeout_seconds}-second limit. No clean verdict was issued."
             else:
                 message = "Scan cancelled by user. No clean verdict was issued."
+            try:
+                partial = json.loads(report.read_text(encoding="utf-8"))
+                if partial.get("complete") is False and isinstance(partial.get("files"), list):
+                    self.results_view.set_report(partial)
+                    message += f"\\nCheckpoint: {len(partial['files'])} completed files (incomplete). View Results for evidence."
+            except (OSError, ValueError, TypeError):
+                pass
             self.output.setText(message)
             self.proc.deleteLater()
             self.proc = None
