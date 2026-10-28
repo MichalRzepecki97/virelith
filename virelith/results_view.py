@@ -188,7 +188,8 @@ class ResultsView(QWidget):
             "pe_analysis": item.get("pe_analysis"),
             "heuristics": item.get("heuristics"),
         }, indent=2, ensure_ascii=False))
-        self.advanced_button.setChecked(False)\n        self.advanced_button.setEnabled(bool(item))
+        self.advanced_button.setChecked(False)
+        self.advanced_button.setEnabled(bool(item))
 
     def copy_digest(self):
         if self.report:
