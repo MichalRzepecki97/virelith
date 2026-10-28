@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from .desktop_views import HistoryView, QuarantineView, SettingsView
 from .scan_history import recent_scans
+from .results_view import ResultsView
 
 STYLE = """
 QWidget { background: #F7F8F7; color: #24313B; font-family: 'Segoe UI'; font-size: 13px; }
@@ -100,7 +101,7 @@ class Desktop(QMainWindow):
         nav.addSpacing(32)
         self.stack = QStackedWidget()
         self.nav_buttons = []
-        for index, label in enumerate(("Overview", "Scan", "History", "Quarantine", "Settings")):
+        for index, label in enumerate(("Overview", "Scan", "Results", "History", "Quarantine", "Settings")):
             button = QPushButton(label)
             button.setCheckable(True)
             button.clicked.connect(lambda _checked=False, i=index: self.change_page(i))
@@ -113,6 +114,8 @@ class Desktop(QMainWindow):
 
         self.stack.addWidget(self.overview_page())
         self.stack.addWidget(self.scan_page())
+        self.results_view = ResultsView()
+        self.stack.addWidget(self.results_view)
         self.history_view = HistoryView(self.history_path())
         self.quarantine_view = QuarantineView(self.quarantine_path())
         self.stack.addWidget(self.history_view)
@@ -127,10 +130,10 @@ class Desktop(QMainWindow):
         return Path(str(self.settings.value('quarantine_store', Path.home() / '.virelith' / 'quarantine'))).expanduser()
 
     def change_page(self, index: int) -> None:
-        if index == 2:
+        if index == 3:
             self.history_view.db_path = self.history_path()
             self.history_view.refresh()
-        elif index == 3:
+        elif index == 4:
             self.quarantine_view.store = self.quarantine_path()
             self.quarantine_view.refresh()
         self.stack.setCurrentIndex(index)
@@ -294,6 +297,7 @@ class Desktop(QMainWindow):
                 history_note = "Saved in history" if saved else "WARNING: history record missing"
             except Exception as exc:
                 history_note = f"WARNING: cannot read history: {exc}"
+            self.results_view.set_report(data)
             self.output.setText(f"Files analyzed: {len(files)}   ·   Detections: {detections}\n"
                                 f"Report: {report}\nHistory: {history_note}\nExit code: {code}\n"
                                 + (f"Details: {stderr[-1200:]}" if stderr else ""))
@@ -302,7 +306,8 @@ class Desktop(QMainWindow):
         if report.exists():
             self.history_view.db_path = self.history_path()
             self.history_view.refresh()
-            self.output.setText(self.output.text() + "\nOpen History to review this scan.")
+            self.output.setText(self.output.text() + "\nOpen Results to inspect this scan.")
+            self.change_page(2)
         self.proc.deleteLater()
         self.proc = None
 
