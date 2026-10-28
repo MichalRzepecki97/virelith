@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 from .scan_history import recent_scans, get_scan
 from .quarantine import list_quarantine
 from .history_filters import filter_scans
+from .quarantine_viewmodel import summarize_quarantine, filter_quarantine, quarantine_row
 
 
 class HistoryView(QWidget):
@@ -98,35 +99,88 @@ class HistoryView(QWidget):
 
 
 class QuarantineView(QWidget):
-    """Read-only intentionally: real malicious samples are not safely handled yet."""
+    """Read-only inventory. Never move, restore or execute quarantined files."""
     def __init__(self, store):
         super().__init__()
         self.store = store
+        self.entries = []
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("Quarantine — inventory (read-only prototype)"))
-        self.note = QLabel("No restore / delete actions in the desktop until containment is hardened.")
+        heading = QLabel("Quarantine")
+        heading.setStyleSheet("font-size: 25px; font-weight: 600;")
+        layout.addWidget(heading)
+        self.note = QLabel("Local inventory only · no automatic isolation or restore actions.")
         self.note.setWordWrap(True)
         layout.addWidget(self.note)
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["ID", "Original path", "SHA-256", "State", "Date"])
-        self.table.horizontalHeader().setStretchLastSection(True)
+        self.summary = QLabel("No stored records")
+        layout.addWidget(self.summary)
+        controls = QHBoxLayout()
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search file name or entry ID…")
+        self.search.textChanged.connect(self.apply_filters)
+        controls.addWidget(self.search, 1)
+        self.state_filter = QComboBox()
+        self.state_filter.addItem("All entries", "all")
+        self.state_filter.addItem("Quarantined", "quarantined")
+        self.state_filter.addItem("Restored", "restored")
+        self.state_filter.currentIndexChanged.connect(self.apply_filters)
+        controls.addWidget(self.state_filter)
+        layout.addLayout(controls)
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["File", "State", "Date (UTC)"])
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.table)
-        refresh = QPushButton("Refresh quarantine")
+        self.details = QTextEdit()
+        self.details.setReadOnly(True)
+        self.details.setMaximumHeight(135)
+        self.details.setPlaceholderText("Select an entry to inspect metadata.")
+        self.table.itemSelectionChanged.connect(self.show_selected)
+        layout.addWidget(self.details)
+        refresh = QPushButton("Refresh inventory")
         refresh.clicked.connect(self.refresh)
         layout.addWidget(refresh)
+        layout.addWidget(QLabel("Experimental quarantine: do not use for real malware containment."))
         self.refresh()
 
     def refresh(self):
         try:
-            entries = list_quarantine(self.store)
-            self.table.setRowCount(len(entries))
-            for i, entry in enumerate(entries):
-                for j, key in enumerate(("id", "original", "sha256", "state", "created_utc")):
-                    self.table.setItem(i, j, QTableWidgetItem(str(entry[key])))
-            self.note.setText(f"Read-only inventory: {self.store} — {len(entries)} entries")
+            self.entries = list_quarantine(self.store)
+            totals = summarize_quarantine(self.entries)
+            self.summary.setText(
+                f"{totals['quarantined']} quarantined · {totals['restored']} restored · "
+                f"{totals['total']} total records")
+            self.note.setText(f"Read-only local inventory: {self.store}")
         except Exception as exc:
+            self.entries = []
             self.note.setText(f"Cannot read quarantine inventory: {exc}")
+            self.summary.setText("Inventory unavailable")
+        self.apply_filters()
+
+    def apply_filters(self, *_args):
+        self.visible_entries = filter_quarantine(
+            self.entries, self.search.text(), self.state_filter.currentData())
+        self.table.setRowCount(0)
+        self.table.setRowCount(len(self.visible_entries))
+        for i, entry in enumerate(self.visible_entries):
+            for j, value in enumerate(quarantine_row(entry)):
+                self.table.setItem(i, j, QTableWidgetItem(value))
+        self.details.clear()
+        if not self.visible_entries:
+            self.details.setPlaceholderText(
+                "No matching entries. Empty quarantine is normal if no files were manually isolated.")
+
+    def show_selected(self):
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self.visible_entries):
+            return
+        entry = self.visible_entries[row]
+        self.details.setPlainText(
+            f"Original path: {entry.get('original', '—')}\n"
+            f"Entry ID: {entry.get('id', '—')}\n"
+            f"SHA-256: {entry.get('sha256', '—')}\n"
+            f"State: {entry.get('state', '—')}"
+        )
 
 
 class SettingsView(QWidget):
