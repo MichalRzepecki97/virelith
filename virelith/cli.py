@@ -66,13 +66,54 @@ def scan_one(path: Path, clam_exe: str, rules, max_yara_bytes: int) -> dict:
     return item
 
 
-def files_under(target: Path):
+class ScanLimitExceeded(RuntimeError):
+    """Traversal stopped deliberately; results are incomplete."""
+
+
+def files_under(target: Path, *, max_files=500, max_depth=8, max_total_mb=256):
+    """Yield regular files without following symlinks, with bounded traversal.
+
+    Limits bound the analysis workload, not total directory enumeration time.
+    Filesystem content can change between validation and scanning.
+    """
+    if target.is_symlink():
+        raise ValueError("Symlink targets are not permitted")
+    max_total_bytes = max_total_mb * 1024 * 1024
+    count = 0
+    total_bytes = 0
+
+    def accept(path):
+        nonlocal count, total_bytes
+        if path.is_symlink() or not path.is_file():
+            return False
+        size = path.stat().st_size
+        if count >= max_files:
+            raise ScanLimitExceeded(f"maximum file count reached ({max_files})")
+        if total_bytes + size > max_total_bytes:
+            raise ScanLimitExceeded(f"maximum total input size reached ({max_total_mb} MiB)")
+        count += 1
+        total_bytes += size
+        return True
+
     if target.is_file():
-        yield target
+        if accept(target):
+            yield target
     elif target.is_dir():
-        for root, _, filenames in os.walk(target):
-            for name in filenames:
-                yield Path(root) / name
+        root_depth = len(target.parts)
+        for root, dirs, filenames in os.walk(target, followlinks=False):
+            depth = len(Path(root).parts) - root_depth
+            dirs[:] = sorted(d for d in dirs if not (Path(root) / d).is_symlink())
+            if depth >= max_depth:
+                if dirs:
+                    raise ScanLimitExceeded(f"maximum directory depth reached ({max_depth})")
+                dirs.clear()
+            for name in sorted(filenames):
+                path = Path(root) / name
+                try:
+                    if accept(path):
+                        yield path
+                except OSError as exc:
+                    raise ScanLimitExceeded(f"cannot inspect {path}: {exc}") from exc
     else:
         raise FileNotFoundError(str(target))
 
@@ -86,7 +127,12 @@ def main():
     parser.add_argument("--report", type=Path, default=Path("scan-report.json"))
     parser.add_argument("--history-db", type=Path, help="optional local SQLite scan history")
     parser.add_argument("--max-yara-mb", type=int, default=64)
+    parser.add_argument("--max-files", type=int, default=500, help="maximum files per scan (default: 500)")
+    parser.add_argument("--max-depth", type=int, default=8, help="maximum directory depth (default: 8)")
+    parser.add_argument("--max-total-mb", type=int, default=256, help="maximum cumulative file size in MiB (default: 256)")
     args = parser.parse_args()
+    if args.max_files < 1 or args.max_depth < 0 or args.max_total_mb < 1:
+        parser.error("--max-files and --max-total-mb must be positive; --max-depth must be nonnegative")
     if args.max_yara_mb < 1:
         parser.error("--max-yara-mb must be >= 1")
     if args.rule_store is not None and args.rules != parser.get_default("rules"):
@@ -102,15 +148,22 @@ def main():
     except Exception as exc:
         parser.error(f"Cannot compile rules: {exc}")
     results = []
+    traversal_error = None
     try:
-        for path in files_under(args.target):
+        for path in files_under(args.target, max_files=args.max_files,
+                                max_depth=args.max_depth, max_total_mb=args.max_total_mb):
             result = scan_one(path, args.clam, compiled, args.max_yara_mb * 1024 * 1024)
             results.append(result)
             print(f"{result['verdict']:>12} {path}")
     except FileNotFoundError:
         parser.error(f"Target not found: {args.target}")
+    except (ScanLimitExceeded, ValueError, OSError) as exc:
+        traversal_error = str(exc)
+        print(f"Scan incomplete: {exc}", file=__import__("sys").stderr)
     payload = {"schema": 1, "created_utc": datetime.now(timezone.utc).isoformat(),
-               "target": str(args.target), "yara_rules": rule_metadata, "files": results}
+               "target": str(args.target), "yara_rules": rule_metadata, "files": results,
+               "traversal_error": traversal_error,
+               "complete": traversal_error is None}
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     print(f"Report: {args.report.resolve()}")
@@ -123,7 +176,7 @@ def main():
             return 2
     if any(r["verdict"] == "detection" for r in results):
         return 1
-    if any(r["verdict"] != "no_detection" for r in results):
+    if traversal_error or not results or any(r["verdict"] != "no_detection" for r in results):
         return 2
     return 0
 
