@@ -188,6 +188,7 @@ class ResultsView(QWidget):
             "clamav": item.get("clamav"), "yara": item.get("yara"),
             "pe_analysis": item.get("pe_analysis"),
             "heuristics": item.get("heuristics"),
+            "insight": item.get("insight", []),
         }, indent=2, ensure_ascii=False))
         self.advanced_button.setChecked(False)
         self.advanced_button.setEnabled(bool(item))
