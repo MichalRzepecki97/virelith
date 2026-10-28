@@ -85,7 +85,7 @@ class ResultsView(QWidget):
         self.table.setHorizontalHeaderLabels(["File", "Verdict"])
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setMaximumHeight(175)
+        self.table.setMaximumHeight(175)\n        self.table.setAlternatingRowColors(True)
         self.table.setMinimumHeight(88)
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemSelectionChanged.connect(self.show_selected)
@@ -125,7 +125,7 @@ class ResultsView(QWidget):
         details_layout.addLayout(digest_row)
         layout.addWidget(details_card)
 
-        self.advanced_button = QPushButton("Show technical analysis")
+        self.advanced_button = QPushButton("Show technical analysis")\n        self.advanced_button.setEnabled(False)
         self.advanced_button.setObjectName("secondary")
         self.advanced_button.setCheckable(True)
         self.advanced_button.toggled.connect(self.toggle_advanced)
@@ -187,7 +187,7 @@ class ResultsView(QWidget):
             "pe_analysis": item.get("pe_analysis"),
             "heuristics": item.get("heuristics"),
         }, indent=2, ensure_ascii=False))
-        self.advanced_button.setChecked(False)
+        self.advanced_button.setChecked(False)\n        self.advanced_button.setEnabled(bool(item))
 
     def copy_digest(self):
         if self.report:
