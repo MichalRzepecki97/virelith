@@ -23,26 +23,7 @@ from .scan_history import recent_scans
 from .results_view import ResultsView
 from .overview_view import OverviewView
 
-STYLE = """
-QWidget { background: #F7F8F7; color: #24313B; font-family: 'Segoe UI'; font-size: 13px; }
-QFrame#sidebar { background: #202B35; border: none; }
-QFrame#sidebar QLabel { background: transparent; color: #F2F5F3; }
-QFrame#sidebar QPushButton {
-  background: transparent; color: #C1CBCB; border: none;
-  padding: 12px 16px; text-align: left; border-radius: 5px;
-}
-QFrame#sidebar QPushButton:hover { background: #34414C; }
-QFrame#sidebar QPushButton:checked { background: #344D49; color: #FFFFFF; }
-QLabel#h1 { font-size: 26px; font-weight: 650; }
-QLabel#muted { color: #63747D; }
-QFrame#panel { background: #FFFFFF; border: 1px solid #DDE3E1; border-radius: 7px; }
-QFrame#panel QLabel { background: transparent; }
-QPushButton#primary { background: #286958; color: white; padding: 11px 18px; border: none; border-radius: 5px; font-weight: 600; }
-QPushButton#primary:hover { background: #205C4D; }
-QPushButton#primary:disabled { background: #9EAFA9; }
-QLineEdit { background: white; border: 1px solid #CAD5D0; border-radius: 4px; padding: 9px; }
-QPushButton#secondary { background: #E9EEEB; padding: 9px 12px; border: 1px solid #CFD9D3; border-radius: 4px; }
-"""
+from .desktop_theme import STYLE
 
 
 def panel() -> tuple[QFrame, QVBoxLayout]:
@@ -91,12 +72,12 @@ class Desktop(QMainWindow):
 
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(225)
+        sidebar.setFixedWidth(228)
         nav = QVBoxLayout(sidebar)
         nav.setContentsMargins(12, 28, 12, 18)
         nav.setSpacing(5)
         brand = QLabel("◈  V I R E L I T H")
-        brand.setStyleSheet("font-size: 15px; font-weight: 700;")
+        brand.setStyleSheet("font-size: 16px; font-weight: 700; letter-spacing: 2px;")
         nav.addWidget(brand)
         subtitle = QLabel("LOCAL THREAT ANALYSIS")
         subtitle.setStyleSheet("font-size: 10px; color: #9BABAD;")
