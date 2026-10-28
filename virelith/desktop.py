@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from .desktop_views import HistoryView, QuarantineView, SettingsView
 from .scan_history import recent_scans
 from .results_view import ResultsView
+from .overview_view import OverviewView
 
 STYLE = """
 QWidget { background: #F7F8F7; color: #24313B; font-family: 'Segoe UI'; font-size: 13px; }
@@ -112,7 +113,11 @@ class Desktop(QMainWindow):
         row.addWidget(sidebar)
         row.addWidget(self.stack, 1)
 
-        self.stack.addWidget(self.overview_page())
+        self.overview_view = OverviewView(
+            self.history_path(), str(self.settings.value('clam', 'clamscan')),
+            str(self.settings.value('rule_store', '')),
+            lambda: self.change_page(1), lambda: self.change_page(3))
+        self.stack.addWidget(self.overview_view)
         self.stack.addWidget(self.scan_page())
         self.results_view = ResultsView()
         self.stack.addWidget(self.results_view)
@@ -130,6 +135,11 @@ class Desktop(QMainWindow):
         return Path(str(self.settings.value('quarantine_store', Path.home() / '.virelith' / 'quarantine'))).expanduser()
 
     def change_page(self, index: int) -> None:
+        if index == 0:
+            self.overview_view.history_path = self.history_path()
+            self.overview_view.clam_command = str(self.settings.value('clam', 'clamscan'))
+            self.overview_view.rule_store = str(self.settings.value('rule_store', ''))
+            self.overview_view.refresh()
         if index == 3:
             self.history_view.db_path = self.history_path()
             self.history_view.refresh()
