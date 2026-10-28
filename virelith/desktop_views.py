@@ -1,64 +1,100 @@
 """Functional Qt views for local history, quarantine inventory and settings."""
 from pathlib import Path
 
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import QSettings, Signal
 from PySide6.QtWidgets import (
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-    QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
+    QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget, QComboBox,
 )
 from .scan_history import recent_scans, get_scan
 from .quarantine import list_quarantine
+from .history_filters import filter_scans
 
 
 class HistoryView(QWidget):
+    report_selected = Signal(dict)
+
     def __init__(self, db_path):
         super().__init__()
         self.db_path = db_path
+        self.scans = []
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("History — previous scans"))
-        self.note = QLabel("Local SQLite scan history. Select a row to inspect its report.")
+        title = QLabel("Scan history")
+        title.setStyleSheet("font-size: 25px; font-weight: 600;")
+        layout.addWidget(title)
+        self.note = QLabel("Search saved scans and open a report in Results.")
         layout.addWidget(self.note)
-        self.table = QTableWidget(0, 5)
-        self.table.setHorizontalHeaderLabels(["Date (UTC)", "Target", "Files", "Detections", "Scan ID"])
+        controls = QHBoxLayout()
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search file or path…")
+        self.search.textChanged.connect(self.apply_filters)
+        controls.addWidget(self.search, 1)
+        self.verdict_filter = QComboBox()
+        self.verdict_filter.addItem("All scans", "all")
+        self.verdict_filter.addItem("With detections", "detections")
+        self.verdict_filter.addItem("No detections", "no_detections")
+        self.verdict_filter.currentIndexChanged.connect(self.apply_filters)
+        controls.addWidget(self.verdict_filter)
+        layout.addLayout(controls)
+        self.table = QTableWidget(0, 4)
+        self.table.setHorizontalHeaderLabels(["Date (UTC)", "Target", "Files", "Detections"])
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.itemDoubleClicked.connect(lambda _item: self.open_selected())
         layout.addWidget(self.table)
-        self.details = QTextEdit()
-        self.details.setReadOnly(True)
-        self.details.setPlaceholderText("Select a scan to view engine results.")
-        layout.addWidget(self.details)
+        self.open_button = QPushButton("Open selected scan in Results")
+        self.open_button.setEnabled(False)
+        self.open_button.clicked.connect(self.open_selected)
+        self.table.itemSelectionChanged.connect(
+            lambda: self.open_button.setEnabled(self.table.currentRow() >= 0))
+        layout.addWidget(self.open_button)
         refresh = QPushButton("Refresh history")
         refresh.clicked.connect(self.refresh)
         layout.addWidget(refresh)
-        self.table.itemSelectionChanged.connect(self.show_selected)
         self.refresh()
 
     def refresh(self):
         try:
-            scans = recent_scans(self.db_path, limit=100)
-            self.table.setRowCount(len(scans))
-            for i, scan in enumerate(scans):
-                for j, value in enumerate((scan["created_utc"], scan["target"],
-                                            scan["file_count"], scan["detections"], scan["id"])):
-                    self.table.setItem(i, j, QTableWidgetItem(str(value)))
-            self.note.setText(f"History database: {self.db_path} — {len(scans)} scans")
+            self.scans = recent_scans(self.db_path, limit=100)
+            self.apply_filters()
         except Exception as exc:
+            self.scans = []
+            self.apply_filters()
             self.note.setText(f"Cannot read history: {exc}")
 
-    def show_selected(self):
+    def apply_filters(self, *_args):
+        rows = filter_scans(self.scans, self.search.text(),
+                            self.verdict_filter.currentData())
+        self.table.setRowCount(0)
+        self.table.setRowCount(len(rows))
+        for i, scan in enumerate(rows):
+            for j, value in enumerate((scan["created_utc"], scan["target"],
+                                        scan["file_count"], scan["detections"])):
+                cell = QTableWidgetItem(str(value))
+                if j == 0:
+                    cell.setData(256, scan["id"])
+                self.table.setItem(i, j, cell)
+        self.open_button.setEnabled(False)
+        self.note.setText(
+            f"{len(rows)} of {len(self.scans)} saved scans · Last 100 records · "
+            "Double-click to inspect."
+        )
+
+    def open_selected(self):
         row = self.table.currentRow()
-        if row < 0 or self.table.item(row, 4) is None:
+        cell = self.table.item(row, 0) if row >= 0 else None
+        if cell is None:
             return
-        scan_id = self.table.item(row, 4).text()
+        scan_id = cell.data(256)
         try:
             report = get_scan(self.db_path, scan_id)
             if report is None:
-                self.details.setPlainText("Record not found")
+                self.note.setText("Selected record is no longer available.")
                 return
-            import json
-            self.details.setPlainText(json.dumps(report, indent=2, ensure_ascii=False))
+            self.report_selected.emit(report)
         except Exception as exc:
-            self.details.setPlainText(f"Cannot open report: {exc}")
+            self.note.setText(f"Cannot open scan: {exc}")
 
 
 class QuarantineView(QWidget):
