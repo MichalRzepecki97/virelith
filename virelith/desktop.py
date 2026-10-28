@@ -250,10 +250,6 @@ class Desktop(QMainWindow):
         if path.stat().st_size > 5 * 1024 * 1024:
             QMessageBox.warning(self, "File too large", "GUI preview limits scans to 5 MiB to protect the VM.")
             return
-        if QMessageBox.question(self, "Confirm scan",
-                f"Scan this file?\\n{path}\\n\\nNo file will be quarantined automatically.",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
-            return
         if self.proc is not None:
             return
         reports = Path.home() / ".virelith" / "reports"
