@@ -13,7 +13,7 @@ from .pe_analyzer import analyze_pe
 from .heuristic_engine import evaluate_heuristics
 from .active_rules import load_active_rules
 from .scan_history import save_scan
-from .insight import explain_pe_signals
+from .insight import explain_pe_signals, explain_imports
 
 
 def scan_clamav(path: Path, exe: str) -> dict:
@@ -56,7 +56,7 @@ def scan_one(path: Path, clam_exe: str, rules, max_yara_bytes: int) -> dict:
         return item
     item["pe_analysis"] = analyze_pe(path)
     item["heuristics"] = evaluate_heuristics(item["pe_analysis"])
-    item["insight"] = explain_pe_signals(item["heuristics"])
+    item["insight"] = explain_pe_signals(item["heuristics"]) + explain_imports(item["pe_analysis"])
     item["clamav"] = scan_clamav(path, clam_exe)
     item["yara"] = scan_yara(path, rules, max_yara_bytes)
     states = {item["clamav"]["status"], item["yara"]["status"]}
