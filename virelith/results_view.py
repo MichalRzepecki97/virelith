@@ -15,7 +15,7 @@ def text_label(text, size=13, muted=False):
     label = QLabel(str(text))
     label.setWordWrap(True)
     label.setStyleSheet(
-        f"font-size: {size}px; color: {'#667982' if muted else '#25343b'}; background: transparent;"
+        f"font-size: {size}px; color: {'#9AB6BE' if muted else '#E5F2F1'}; background: transparent;"
     )
     return label
 
