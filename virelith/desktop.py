@@ -59,6 +59,7 @@ class Desktop(QMainWindow):
         self.proc: QProcess | None = None
         self.scan_cancelled = False
         self.scan_timed_out = False
+        self.scan_timeout_seconds = 90
         self.settings = QSettings("Virelith", "VirelithDesktop")
         self.scan_timer = QTimer(self)
         self.scan_timer.setSingleShot(True)
@@ -270,6 +271,7 @@ class Desktop(QMainWindow):
         history.parent.mkdir(parents=True, exist_ok=True)
         self.scan_cancelled = False
         self.scan_timed_out = False
+        self.scan_timeout_seconds = 600 if path.is_dir() else 90
         self._progress_buffer = ""
         self.proc = QProcess(self)
         # On POSIX, create a separate process group so cancelling also stops ClamAV.
@@ -291,8 +293,8 @@ class Desktop(QMainWindow):
         self.target_input.setEnabled(False)
         self.choose_file_button.setEnabled(False)
         self.choose_folder_button.setEnabled(False)
-        self.status.setText("Scanning · Processing selected target (up to 90 seconds)")
-        self.scan_timer.start(90_000)
+        self.status.setText(f"Scanning · Time limit: {self.scan_timeout_seconds // 60}m {self.scan_timeout_seconds % 60:02d}s")
+        self.scan_timer.start(self.scan_timeout_seconds * 1000)
         self.output.setText("Scan in progress. You can cancel this operation.\nNo automatic quarantine.")
         self.proc.start()
 
@@ -325,7 +327,7 @@ class Desktop(QMainWindow):
         self.scan_cancelled = True
         self.scan_timer.stop()
         self.cancel_button.setEnabled(False)
-        self.status.setText("Time limit reached · Stopping scan" if self.scan_timed_out else "Cancelling scan…")
+        self.status.setText("Scan time limit reached · Stopping safely" if self.scan_timed_out else "Cancelling scan…")
         if os.name == 'posix' and hasattr(self.proc, 'setChildProcessModifier') and self.proc.processId():
             try:
                 os.killpg(int(self.proc.processId()), signal.SIGKILL)
@@ -364,8 +366,13 @@ class Desktop(QMainWindow):
         self.choose_file_button.setEnabled(True)
         self.choose_folder_button.setEnabled(True)
         if self.scan_cancelled:
-            self.status.setText("Time limit exceeded" if self.scan_timed_out else "Scan cancelled")
-            self.output.setText("Scan was interrupted; results may be incomplete. No report has been trusted.")
+            self.status.setText("Scan stopped — time limit reached" if self.scan_timed_out else "Scan cancelled")
+            self.output.setText(
+                f"The scan exceeded its {self.scan_timeout_seconds}-second time limit. "
+                "No clean verdict was issued. Try a smaller folder.\n"
+                if self.scan_timed_out else
+                "Scan cancelled by user. No clean verdict was issued.\n"
+            )
             self.proc.deleteLater()
             self.proc = None
             self.target_changed()
