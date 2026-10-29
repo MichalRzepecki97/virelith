@@ -214,16 +214,52 @@ class ResultsView(QWidget):
         self.digest.setText("SHA-256: " + (digest or "—"))
         for engine, label in self.engine_labels.items():
             label.setText(engine_status(item, engine))
-        self.advanced.setPlainText(json.dumps({
-            "path": item.get("path"),
-            "sha256": item.get("sha256"),
-            "clamav": item.get("clamav"), "yara": item.get("yara"),
-            "pe_analysis": item.get("pe_analysis"),
-            "heuristics": item.get("heuristics"),
-            "insight": item.get("insight", []),
-        }, indent=2, ensure_ascii=False))
+        self.advanced.setPlainText(json.dumps(analysis_payload(item), indent=2, ensure_ascii=False))
+        while self.insights_container.count():
+            child = self.insights_container.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+        insights = item.get("insight") or []
+        if not isinstance(insights, list):
+            insights = []
+        self.insights_summary.setText(
+            f"{len(insights)} documented observation(s)" if insights
+            else "No explanatory observations for this file."
+        )
+        for observation in insights[:32]:
+            if not isinstance(observation, dict):
+                continue
+            frame, inner = card()
+            inner.addWidget(text_label(str(observation.get("title", "Observation"))[:130], 15))
+            imports = observation.get("matched_imports") or []
+            if isinstance(imports, list) and imports:
+                inner.addWidget(text_label("Matched imports: " + ", ".join(str(i) for i in imports[:20]), 12, True))
+            if observation.get("section"):
+                inner.addWidget(text_label("Section: " + str(observation["section"]), 12, True))
+            inner.addWidget(text_label(str(observation.get("meaning", ""))[:1100], 12))
+            inner.addWidget(text_label("Next step: " + str(observation.get("next_step", ""))[:800], 12, True))
+            self.insights_container.addWidget(frame)
         self.advanced_button.setChecked(False)
         self.advanced_button.setEnabled(bool(item))
+
+    def export_report(self, format_name):
+        if not self.report:
+            return
+        extension = ".html" if format_name == "html" else ".json"
+        output, _ = QFileDialog.getSaveFileName(
+            self, "Export scan report", "virelith-report" + extension,
+            "HTML report (*.html)" if format_name == "html" else "JSON report (*.json)"
+        )
+        if not output:
+            return
+        path = Path(output)
+        if path.suffix.lower() != extension:
+            path = path.with_suffix(extension)
+        try:
+            data = export_report_html(self.report) if format_name == "html" else export_report_json(self.report)
+            path.write_text(data, encoding="utf-8")
+        except OSError as exc:
+            QMessageBox.warning(self, "Export failed", str(exc))
 
     def copy_analysis(self):
         if self.selected_item:
