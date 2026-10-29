@@ -4,11 +4,12 @@ import json
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QApplication, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
+    QApplication, QFileDialog, QMessageBox, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
     QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget,
 )
 
 from .report_viewmodel import summarize_report
+from .report_export import analysis_payload, export_report_html, export_report_json
 
 
 def text_label(text, size=13, muted=False):
@@ -126,6 +127,14 @@ class ResultsView(QWidget):
         digest_row.addWidget(copy)
         details_layout.addLayout(digest_row)
         layout.addWidget(details_card)
+        insight_card, insight_layout = card()
+        insight_layout.addWidget(text_label("SECURITY INSIGHTS / STATIC OBSERVATIONS", 12, True))
+        self.insights_summary = text_label("No analysis selected.", 12, True)
+        insight_layout.addWidget(self.insights_summary)
+        self.insights_container = QVBoxLayout()
+        insight_layout.addLayout(self.insights_container)
+        insight_layout.addWidget(text_label("An import is not proof of execution; an observation is not a malware verdict.", 11, True))
+        layout.addWidget(insight_card)
 
         self.advanced_button = QPushButton("Show technical analysis")
         self.advanced_button.setEnabled(False)
@@ -139,6 +148,14 @@ class ResultsView(QWidget):
         self.copy_analysis_button.setEnabled(False)
         self.copy_analysis_button.clicked.connect(self.copy_analysis)
         analysis_actions.addWidget(self.copy_analysis_button)
+        self.export_json_button = QPushButton("Export JSON")
+        self.export_html_button = QPushButton("Export HTML")
+        for button in (self.export_json_button, self.export_html_button):
+            button.setObjectName("secondary")
+            button.setEnabled(False)
+            analysis_actions.addWidget(button)
+        self.export_json_button.clicked.connect(lambda: self.export_report("json"))
+        self.export_html_button.clicked.connect(lambda: self.export_report("html"))
         analysis_actions.addStretch()
         layout.addLayout(analysis_actions)
         self.advanced = QTextEdit()
@@ -156,6 +173,8 @@ class ResultsView(QWidget):
 
     def set_report(self, report: dict):
         self.report = report
+        self.export_json_button.setEnabled(True)
+        self.export_html_button.setEnabled(True)
         result = summarize_report(report)
         counts = result["counts"]
         self.verdict.setText(result["status"])
