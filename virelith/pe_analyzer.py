@@ -43,6 +43,15 @@ def analyze_pe(path: Path, *, max_bytes: int = 64 * 1024 * 1024) -> dict:
             result["machine"] = hex(machine)
             result["entry_point"] = int(pe.OPTIONAL_HEADER.AddressOfEntryPoint)
             result["section_count"] = len(pe.sections)
+            result["image_base"] = hex(int(pe.OPTIONAL_HEADER.ImageBase))
+            result["subsystem"] = int(pe.OPTIONAL_HEADER.Subsystem)
+            result["dll_characteristics"] = hex(int(pe.OPTIONAL_HEADER.DllCharacteristics))
+            result["timestamp"] = int(pe.FILE_HEADER.TimeDateStamp)
+            result["entry_point_in_section"] = any(
+                int(section.VirtualAddress) <= result["entry_point"] <
+                int(section.VirtualAddress) + max(int(section.Misc_VirtualSize), int(section.SizeOfRawData))
+                for section in pe.sections
+            )
             for section in pe.sections:
                 name = section.Name.rstrip(bytes([0])).decode("utf-8", errors="replace")
                 data = section.get_data()
@@ -58,6 +67,11 @@ def analyze_pe(path: Path, *, max_bytes: int = 64 * 1024 * 1024) -> dict:
                     "writable": writable,
                     "executable": executable,
                 })
+                if int(section.SizeOfRawData) == 0 and executable:
+                    result["findings"].append({
+                        "type": "zero_raw_executable_section", "section": name,
+                        "severity": "informational",
+                    })
                 if writable and executable:
                     result["findings"].append({
                         "type": "writable_executable_section", "section": name,
