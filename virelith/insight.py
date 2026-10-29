@@ -102,3 +102,30 @@ def explain_imports(pe_analysis: dict | None) -> list[dict]:
                 "interpretation": "Import-table observation — not proof of API execution or malware",
             })
     return explanations
+
+
+def explain_structure(pe_analysis: dict | None) -> list[dict]:
+    """Explain bounded structural facts from successfully parsed PE metadata."""
+    if not isinstance(pe_analysis, dict) or pe_analysis.get("status") != "analyzed":
+        return []
+    output = []
+    if pe_analysis.get("entry_point_in_section") is False:
+        output.append({
+            "id": "pe_entry_outside_sections", "title": "Entry point outside mapped sections",
+            "level": "review", "meaning": "The PE entry-point RVA does not fall in any reported section. "
+            "Some protected or unusual binaries can have unconventional layouts.",
+            "next_step": "Inspect PE headers, section mappings and loader behavior.",
+            "interpretation": "Structural observation — not proof of malware",
+        })
+    for finding in (pe_analysis.get("findings") or [])[:96]:
+        if not isinstance(finding, dict) or finding.get("type") != "zero_raw_executable_section":
+            continue
+        output.append({
+            "id": "pe_zero_raw_exec", "title": "Executable section has no raw file bytes",
+            "level": "informational", "section": str(finding.get("section", ""))[:64],
+            "meaning": "The section is marked executable but has zero raw file size. "
+            "This may be a legitimate uninitialized or specially mapped section.",
+            "next_step": "Compare virtual size, mapped permissions and expected compiler output.",
+            "interpretation": "Structural observation — not proof of malware",
+        })
+    return output
