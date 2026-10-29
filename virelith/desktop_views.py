@@ -1,7 +1,7 @@
 """Functional Qt views for local history, quarantine inventory and settings."""
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Signal, QProcess
+from PySide6.QtCore import QSettings, Signal, QProcess, QTimer
 from PySide6.QtWidgets import (
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget, QComboBox,
@@ -232,6 +232,10 @@ class SettingsView(QWidget):
         sig_actions.addWidget(self.update_button)
         layout.addLayout(sig_actions)
         self.update_proc = None
+        self.update_expired = False
+        self.update_timer = QTimer(self)
+        self.update_timer.setSingleShot(True)
+        self.update_timer.timeout.connect(self.signature_update_timeout)
         layout.addStretch()
 
     def save(self):
@@ -256,6 +260,7 @@ class SettingsView(QWidget):
     def start_signature_update(self):
         if self.update_proc is not None:
             return
+        self.update_expired = False
         self.update_proc = QProcess(self)
         self.update_proc.setProgram("freshclam")
         self.update_proc.setArguments(["--stdout"])
@@ -267,6 +272,12 @@ class SettingsView(QWidget):
             "are managed by FreshClam. No update is guaranteed."
         )
         self.update_proc.start()
+        self.update_timer.start(240_000)
+
+    def signature_update_timeout(self):
+        if self.update_proc is not None:
+            self.update_expired = True
+            self.update_proc.kill()
 
     def signature_update_error(self, error):
         if self.update_proc is None:
@@ -283,13 +294,16 @@ class SettingsView(QWidget):
         output = bytes(self.update_proc.readAllStandardOutput()).decode(errors="replace")
         errors = bytes(self.update_proc.readAllStandardError()).decode(errors="replace")
         self.signature_status.setText(
-            ("FreshClam completed. Check signature status to verify databases.\n"
+            ("FreshClam timed out after 240 seconds; update not verified.\n"
+             if self.update_expired else
+             "FreshClam completed. Check signature status to verify databases.\n"
              if exit_code == 0 else f"FreshClam failed (exit {exit_code}).\n")
             + (output + "\n" + errors).strip()[-1500:]
         )
         self.finish_signature_process()
 
     def finish_signature_process(self):
+        self.update_timer.stop()
         if self.update_proc is not None:
             self.update_proc.deleteLater()
             self.update_proc = None
