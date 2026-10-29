@@ -47,6 +47,7 @@ class ResultsView(QWidget):
     def __init__(self):
         super().__init__()
         self.report = None
+        self.selected_item = {}
         outer = QVBoxLayout(self)
         outer.setContentsMargins(30, 24, 30, 20)
         outer.setSpacing(0)
@@ -131,7 +132,15 @@ class ResultsView(QWidget):
         self.advanced_button.setObjectName("secondary")
         self.advanced_button.setCheckable(True)
         self.advanced_button.toggled.connect(self.toggle_advanced)
-        layout.addWidget(self.advanced_button, alignment=Qt.AlignLeft)
+        analysis_actions = QHBoxLayout()
+        analysis_actions.addWidget(self.advanced_button)
+        self.copy_analysis_button = QPushButton("Copy analysis JSON")
+        self.copy_analysis_button.setObjectName("secondary")
+        self.copy_analysis_button.setEnabled(False)
+        self.copy_analysis_button.clicked.connect(self.copy_analysis)
+        analysis_actions.addWidget(self.copy_analysis_button)
+        analysis_actions.addStretch()
+        layout.addLayout(analysis_actions)
         self.advanced = QTextEdit()
         self.advanced.setReadOnly(True)
         self.advanced.setMinimumHeight(190)
@@ -177,6 +186,8 @@ class ResultsView(QWidget):
 
     def show_file(self, item):
         item = item if isinstance(item, dict) else {}
+        self.selected_item = item
+        self.copy_analysis_button.setEnabled(bool(item))
         path = str(item.get("path", ""))
         self.selected_name.setText(Path(path).name if path else "No file selected")
         self.file_path.setText("Path: " + (path or "—"))
@@ -185,6 +196,8 @@ class ResultsView(QWidget):
         for engine, label in self.engine_labels.items():
             label.setText(engine_status(item, engine))
         self.advanced.setPlainText(json.dumps({
+            "path": item.get("path"),
+            "sha256": item.get("sha256"),
             "clamav": item.get("clamav"), "yara": item.get("yara"),
             "pe_analysis": item.get("pe_analysis"),
             "heuristics": item.get("heuristics"),
@@ -192,6 +205,10 @@ class ResultsView(QWidget):
         }, indent=2, ensure_ascii=False))
         self.advanced_button.setChecked(False)
         self.advanced_button.setEnabled(bool(item))
+
+    def copy_analysis(self):
+        if self.selected_item:
+            QApplication.clipboard().setText(self.advanced.toPlainText())
 
     def copy_digest(self):
         if self.report:
