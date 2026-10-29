@@ -1,7 +1,7 @@
 """Functional Qt views for local history, quarantine inventory and settings."""
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Signal
+from PySide6.QtCore import QSettings, Signal, QProcess, QTimer
 from PySide6.QtWidgets import (
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget, QComboBox,
@@ -10,6 +10,7 @@ from .scan_history import recent_scans, get_scan
 from .quarantine import list_quarantine
 from .history_filters import filter_scans
 from .quarantine_viewmodel import summarize_quarantine, filter_quarantine, quarantine_row
+from .signature_management import signature_snapshot
 
 
 class HistoryView(QWidget):
@@ -216,6 +217,25 @@ class SettingsView(QWidget):
         save = QPushButton("Save settings")
         save.clicked.connect(self.save)
         layout.addWidget(save)
+        layout.addWidget(QLabel("CLAMAV SIGNATURE DATABASES"))
+        self.signature_status = QLabel(
+            "Status not checked. Updates use the installed FreshClam utility."
+        )
+        self.signature_status.setWordWrap(True)
+        layout.addWidget(self.signature_status)
+        sig_actions = QHBoxLayout()
+        status_button = QPushButton("Check signature status")
+        status_button.clicked.connect(self.check_signatures)
+        sig_actions.addWidget(status_button)
+        self.update_button = QPushButton("Run FreshClam update")
+        self.update_button.clicked.connect(self.start_signature_update)
+        sig_actions.addWidget(self.update_button)
+        layout.addLayout(sig_actions)
+        self.update_proc = None
+        self.update_expired = False
+        self.update_timer = QTimer(self)
+        self.update_timer.setSingleShot(True)
+        self.update_timer.timeout.connect(self.signature_update_timeout)
         layout.addStretch()
 
     def save(self):
@@ -224,3 +244,67 @@ class SettingsView(QWidget):
             self.settings.setValue(key, edit.text().strip())
         self.settings.sync()
         self.status.setText("Settings saved. They apply to the next scan; refresh other tabs to read new paths.")
+
+    def check_signatures(self):
+        snapshot = signature_snapshot(str(self.clam.text().strip() or "clamscan"))
+        clam = snapshot["clamav"]
+        databases = clam.get("databases", [])
+        self.signature_status.setText(
+            f"ClamAV status: {clam['status']} | "
+            f"Version: {clam.get('engine_version', 'unavailable')} | "
+            f"Local database files: {len(databases)} | "
+            f"FreshClam found: {'yes' if snapshot['freshclam_available'] else 'no'}\n"
+            + snapshot["notice"]
+        )
+
+    def start_signature_update(self):
+        if self.update_proc is not None:
+            return
+        self.update_expired = False
+        self.update_proc = QProcess(self)
+        self.update_proc.setProgram("freshclam")
+        self.update_proc.setArguments(["--stdout"])
+        self.update_proc.finished.connect(self.signature_update_finished)
+        self.update_proc.errorOccurred.connect(self.signature_update_error)
+        self.update_button.setEnabled(False)
+        self.signature_status.setText(
+            "FreshClam running. Database locks, mirror access and permissions "
+            "are managed by FreshClam. No update is guaranteed."
+        )
+        self.update_proc.start()
+        self.update_timer.start(240_000)
+
+    def signature_update_timeout(self):
+        if self.update_proc is not None:
+            self.update_expired = True
+            self.update_proc.kill()
+
+    def signature_update_error(self, error):
+        if self.update_proc is None:
+            return
+        if error == QProcess.FailedToStart:
+            self.signature_status.setText(
+                "Could not start FreshClam: " + self.update_proc.errorString()
+            )
+            self.finish_signature_process()
+
+    def signature_update_finished(self, exit_code, _status):
+        if self.update_proc is None:
+            return
+        output = bytes(self.update_proc.readAllStandardOutput()).decode(errors="replace")
+        errors = bytes(self.update_proc.readAllStandardError()).decode(errors="replace")
+        self.signature_status.setText(
+            ("FreshClam timed out after 240 seconds; update not verified.\n"
+             if self.update_expired else
+             "FreshClam completed. Check signature status to verify databases.\n"
+             if exit_code == 0 else f"FreshClam failed (exit {exit_code}).\n")
+            + (output + "\n" + errors).strip()[-1500:]
+        )
+        self.finish_signature_process()
+
+    def finish_signature_process(self):
+        self.update_timer.stop()
+        if self.update_proc is not None:
+            self.update_proc.deleteLater()
+            self.update_proc = None
+        self.update_button.setEnabled(True)
