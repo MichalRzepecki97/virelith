@@ -9,7 +9,11 @@ description = "Experimental local Windows malware scanner: ClamAV + YARA-X"
 requires-python = ">=3.12"
 dependencies = ["yara-x>=1.20,<2", "pefile>=2023.2.7,<2027", "cryptography>=43,<48"]
 
+[project.optional-dependencies]
+desktop = ["PySide6>=6.7,<7"]
+
 [project.scripts]
+virelith-desktop = "virelith.desktop:main"
 virelith = "virelith.cli:main"
 
 [tool.setuptools.packages.find]
