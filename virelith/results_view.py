@@ -230,13 +230,28 @@ class ResultsView(QWidget):
             if not isinstance(observation, dict):
                 continue
             frame, inner = card()
-            inner.addWidget(text_label(str(observation.get("title", "Observation"))[:130], 15))
+            heading = QHBoxLayout()
+            category = str(observation.get("id", ""))
+            symbol = "◈" if category.startswith("api_") else "▤"
+            heading.addWidget(text_label(symbol + "  " + str(observation.get("title", "Observation"))[:130], 15), 1)
+            level = str(observation.get("level", "informational")).lower()
+            status = text_label("REVIEW" if level == "review" else "INFORMATIONAL", 10)
+            status.setStyleSheet(
+                "color:#F2BE78; font-weight:700; background:transparent;" if level == "review"
+                else "color:#78C4D4; font-weight:650; background:transparent;"
+            )
+            heading.addWidget(status)
+            inner.addLayout(heading)
             imports = observation.get("matched_imports") or []
             if isinstance(imports, list) and imports:
-                inner.addWidget(text_label("Matched imports: " + ", ".join(str(i) for i in imports[:20]), 12, True))
+                api = text_label("  ·  ".join(str(i)[:80] for i in imports[:20]), 12)
+                api.setTextInteractionFlags(Qt.TextSelectableByMouse)
+                api.setStyleSheet("color:#52CCA6; font-family:monospace; background:transparent;")
+                inner.addWidget(api)
             if observation.get("section"):
                 inner.addWidget(text_label("Section: " + str(observation["section"]), 12, True))
-            inner.addWidget(text_label(str(observation.get("meaning", ""))[:1100], 12))
+            meaning = text_label(str(observation.get("meaning", ""))[:1100], 12)
+            inner.addWidget(meaning)
             inner.addWidget(text_label("Next step: " + str(observation.get("next_step", ""))[:800], 12, True))
             self.insights_container.addWidget(frame)
         self.advanced_button.setChecked(False)
