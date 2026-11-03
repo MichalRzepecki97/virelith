@@ -263,6 +263,8 @@ class SettingsView(QWidget):
         self.update_button = QPushButton("Run FreshClam update")
         self.update_button.setObjectName("primary")
         self.update_button.clicked.connect(self.start_signature_update)
+        self.update_button.setEnabled(False)
+        self.freshclam_executable = None
         actions.addWidget(self.update_button)
         actions.addStretch()
         clam_layout.addLayout(actions)
@@ -380,6 +382,7 @@ class SettingsView(QWidget):
             f"Engine: {clam.get('engine_version', 'Unavailable')}",
             f"Status: {clam['status']}",
             f"FreshClam installed: {snapshot['freshclam_available']}",
+            f"FreshClam executable: {snapshot['freshclam_executable'] or 'Not found'}",
             f"Database directory: {snapshot['database_path']}",
         ]
         for db in databases:
@@ -402,7 +405,13 @@ class SettingsView(QWidget):
              "Automatic update service not detected. Manual update may require "
              "system-managed permissions.")
         )
-        self.update_button.setEnabled(not self.freshclam_service_active and self.update_proc is None)
+        self.freshclam_executable = snapshot["freshclam_executable"]
+        can_update = bool(self.freshclam_executable) and not self.freshclam_service_active
+        self.update_button.setEnabled(can_update and self.update_proc is None)
+        if not self.freshclam_executable:
+            self.service_status.setText(
+                "FreshClam updater not found. Install or configure ClamAV before updating."
+            )
         details.append("System FreshClam service: " + service["status"])
         self._set_clam_message(message, "\n".join(details))
 
@@ -411,6 +420,13 @@ class SettingsView(QWidget):
             return
         service = freshclam_service_status()
         self.freshclam_service_active = service["status"] == "active"
+        if not self.freshclam_executable:
+            self._set_clam_message(
+                "FreshClam updater is unavailable. Run Check ClamAV status to "
+                "find an installed updater before attempting an update."
+            )
+            self.update_button.setEnabled(False)
+            return
         if self.freshclam_service_active:
             self.service_status.setText(
                 "Automatic FreshClam service is active. Manual update is not needed here."
@@ -419,7 +435,7 @@ class SettingsView(QWidget):
             return
         self.update_expired = False
         self.update_proc = QProcess(self)
-        self.update_proc.setProgram("freshclam")
+        self.update_proc.setProgram(self.freshclam_executable)
         self.update_proc.setArguments(["--stdout"])
         self.update_proc.finished.connect(self.signature_update_finished)
         self.update_proc.errorOccurred.connect(self.signature_update_error)
@@ -462,4 +478,4 @@ class SettingsView(QWidget):
         if self.update_proc is not None:
             self.update_proc.deleteLater()
             self.update_proc = None
-        self.update_button.setEnabled(not self.freshclam_service_active)
+        self.update_button.setEnabled(bool(self.freshclam_executable) and not self.freshclam_service_active)
