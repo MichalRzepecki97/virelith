@@ -18,7 +18,7 @@ _MAX_RULE_BYTES = 4 * 1024 * 1024
 def clamav_status(
     *,
     clam_exe: str = "clamscan",
-    database_dir: Path = Path("/var/lib/clamav"),
+    database_dir: Path | None = Path("/var/lib/clamav"),
 ) -> dict:
     """Report scanner version and local database metadata without running updates."""
     try:
@@ -34,7 +34,7 @@ def clamav_status(
 
     databases = []
     try:
-        if database_dir.is_dir():
+        if database_dir is not None and database_dir.is_dir():
             for path in sorted(database_dir.iterdir()):
                 if path.is_file() and path.suffix.lower() in {".cvd", ".cld"}:
                     stat = path.stat()
@@ -47,7 +47,9 @@ def clamav_status(
         return {"status": "error", "detail": str(exc)[:500]}
 
     return {
-        "status": "ok" if databases else "database_missing",
+        "status": ("ok" if databases else
+                   "database_location_unknown" if database_dir is None else
+                   "database_missing"),
         "engine_version": result.stdout.strip()[:300],
         "databases": databases,
         "note": "Database file timestamps do not prove freshness or signature authenticity.",
