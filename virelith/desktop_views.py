@@ -338,7 +338,7 @@ class SettingsView(QWidget):
         if clam.get("detail"):
             lines.append(str(clam["detail"]))
         lines.append(snapshot["notice"])
-        self.signature_status.setText("\\n".join(lines))
+        self.signature_status.setText("\n".join(lines))
 
     def start_signature_update(self):
         if self.update_proc is not None:
