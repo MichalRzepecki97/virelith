@@ -10,15 +10,30 @@ import sys
 from pathlib import Path
 
 from .update_manager import clamav_status
+from .signature_paths import choose_database_dir, find_freshclam
 
 
-def signature_snapshot(clam_exe: str = "clamscan", database_dir: Path = Path("/var/lib/clamav")) -> dict:
-    result = clamav_status(clam_exe=clam_exe, database_dir=database_dir)
+def signature_snapshot(clam_exe: str = "clamscan",
+                       database_dir: Path | None = None) -> dict:
+    """Report detected local databases, distinguishing discovery from certainty."""
+    discovered = False
+    if database_dir is None:
+        database_dir, discovered = choose_database_dir()
+    if database_dir is None:
+        # No plausible database directory was found. Still check the scanner.
+        result = clamav_status(clam_exe=clam_exe, database_dir=Path("__missing_clamav_db__"))
+    else:
+        result = clamav_status(clam_exe=clam_exe, database_dir=database_dir)
+    updater = find_freshclam(clam_exe)
     return {
         "clamav": result,
-        "freshclam_available": shutil.which("freshclam") is not None,
-        "database_path": str(database_dir),
-        "notice": "File timestamps and scanner versions do not prove signature authenticity or freshness.",
+        "freshclam_available": updater is not None,
+        "freshclam_executable": updater,
+        "database_path": str(database_dir) if database_dir is not None else "Not discovered",
+        "database_discovered": discovered if database_dir is not None else False,
+        "notice": ("Database location is inferred from common paths, not verified "
+                   "against the active ClamAV configuration. File timestamps "
+                   "do not establish signature freshness or authenticity."),
     }
 
 
