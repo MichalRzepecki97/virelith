@@ -11,7 +11,7 @@ from .scan_history import recent_scans, get_scan
 from .quarantine import list_quarantine
 from .history_filters import filter_scans
 from .quarantine_viewmodel import summarize_quarantine, filter_quarantine, quarantine_row
-from .signature_management import signature_snapshot, yara_store_snapshot
+from .signature_management import signature_snapshot, yara_store_snapshot, freshclam_service_status
 from .signature_messages import explain_freshclam, explain_yara
 
 
@@ -200,6 +200,7 @@ class SettingsView(QWidget):
         self.settings = settings
         self.update_proc = None
         self.update_expired = False
+        self.freshclam_service_active = False
         self.update_timer = QTimer(self)
         self.update_timer.setSingleShot(True)
         self.update_timer.timeout.connect(self.signature_update_timeout)
@@ -235,6 +236,12 @@ class SettingsView(QWidget):
         self.signature_status.setWordWrap(True)
         self.signature_status.setTextInteractionFlags(Qt.TextSelectableByMouse)
         clam_layout.addWidget(self.signature_status)
+        self.service_status = QLabel(
+            "Update service not checked. Inspect ClamAV status before attempting a manual update."
+        )
+        self.service_status.setWordWrap(True)
+        self.service_status.setStyleSheet("color:#A3BDC3; background:transparent;")
+        clam_layout.addWidget(self.service_status)
         self.clam_details_toggle = QPushButton("Show technical details")
         self.clam_details_toggle.setObjectName("secondary")
         self.clam_details_toggle.setCheckable(True)
@@ -383,10 +390,29 @@ class SettingsView(QWidget):
         if clam.get("detail"):
             details.append(str(clam["detail"]))
         details.append(snapshot["notice"])
+        service = freshclam_service_status()
+        self.freshclam_service_active = service["status"] == "active"
+        self.service_status.setText(
+            "System FreshClam service is active. It manages database updates; "
+            "manual updates are disabled to prevent conflicts."
+            if self.freshclam_service_active else
+            "Automatic update service not detected. Manual update may require "
+            "system-managed permissions."
+        )
+        self.update_button.setEnabled(not self.freshclam_service_active and self.update_proc is None)
+        details.append("System FreshClam service: " + service["status"])
         self._set_clam_message(message, "\n".join(details))
 
     def start_signature_update(self):
         if self.update_proc is not None:
+            return
+        service = freshclam_service_status()
+        self.freshclam_service_active = service["status"] == "active"
+        if self.freshclam_service_active:
+            self.service_status.setText(
+                "Automatic FreshClam service is active. Manual update is not needed here."
+            )
+            self.update_button.setEnabled(False)
             return
         self.update_expired = False
         self.update_proc = QProcess(self)
@@ -433,4 +459,4 @@ class SettingsView(QWidget):
         if self.update_proc is not None:
             self.update_proc.deleteLater()
             self.update_proc = None
-        self.update_button.setEnabled(True)
+        self.update_button.setEnabled(not self.freshclam_service_active)
