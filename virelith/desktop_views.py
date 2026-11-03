@@ -396,8 +396,11 @@ class SettingsView(QWidget):
             "System FreshClam service is active. It manages database updates; "
             "manual updates are disabled to prevent conflicts."
             if self.freshclam_service_active else
-            "Automatic update service not detected. Manual update may require "
-            "system-managed permissions."
+            ("FreshClam service status could not be checked on this system. "
+             "Manual updates may need administrator-managed configuration."
+             if service["status"] == "unavailable" else
+             "Automatic update service not detected. Manual update may require "
+             "system-managed permissions.")
         )
         self.update_button.setEnabled(not self.freshclam_service_active and self.update_proc is None)
         details.append("System FreshClam service: " + service["status"])
