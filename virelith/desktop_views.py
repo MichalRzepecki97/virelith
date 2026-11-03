@@ -12,6 +12,7 @@ from .quarantine import list_quarantine
 from .history_filters import filter_scans
 from .quarantine_viewmodel import summarize_quarantine, filter_quarantine, quarantine_row
 from .signature_management import signature_snapshot, yara_store_snapshot
+from .signature_messages import explain_freshclam, explain_yara
 
 
 class HistoryView(QWidget):
@@ -234,6 +235,19 @@ class SettingsView(QWidget):
         self.signature_status.setWordWrap(True)
         self.signature_status.setTextInteractionFlags(Qt.TextSelectableByMouse)
         clam_layout.addWidget(self.signature_status)
+        self.clam_details_toggle = QPushButton("Show technical details")
+        self.clam_details_toggle.setObjectName("secondary")
+        self.clam_details_toggle.setCheckable(True)
+        self.clam_details_toggle.toggled.connect(
+            lambda checked: self._toggle_diagnostics(checked)
+        )
+        self.clam_details_toggle.setEnabled(False)
+        self.clam_diagnostics = QTextEdit()
+        self.clam_diagnostics.setReadOnly(True)
+        self.clam_diagnostics.setMaximumHeight(150)
+        self.clam_diagnostics.setVisible(False)
+        clam_layout.addWidget(self.clam_details_toggle)
+        clam_layout.addWidget(self.clam_diagnostics)
         actions = QHBoxLayout()
         status_button = QPushButton("Check ClamAV status")
         status_button.setObjectName("secondary")
@@ -252,6 +266,17 @@ class SettingsView(QWidget):
         self.yara_status.setWordWrap(True)
         self.yara_status.setTextInteractionFlags(Qt.TextSelectableByMouse)
         yara_layout.addWidget(self.yara_status)
+        self.yara_details_toggle = QPushButton("Show technical details")
+        self.yara_details_toggle.setObjectName("secondary")
+        self.yara_details_toggle.setCheckable(True)
+        self.yara_details_toggle.toggled.connect(self._toggle_yara_diagnostics)
+        self.yara_details_toggle.setEnabled(False)
+        self.yara_diagnostics = QTextEdit()
+        self.yara_diagnostics.setReadOnly(True)
+        self.yara_diagnostics.setMaximumHeight(130)
+        self.yara_diagnostics.hide()
+        yara_layout.addWidget(self.yara_details_toggle)
+        yara_layout.addWidget(self.yara_diagnostics)
         check_yara = QPushButton("Verify active YARA rules")
         check_yara.setObjectName("secondary")
         check_yara.clicked.connect(self.check_yara)
@@ -297,17 +322,31 @@ class SettingsView(QWidget):
         inner.addWidget(heading)
         return panel, inner
 
+    def _toggle_diagnostics(self, visible):
+        self.clam_diagnostics.setVisible(visible)
+        self.clam_details_toggle.setText(
+            "Hide technical details" if visible else "Show technical details"
+        )
+
+    def _toggle_yara_diagnostics(self, visible):
+        self.yara_diagnostics.setVisible(visible)
+        self.yara_details_toggle.setText(
+            "Hide technical details" if visible else "Show technical details"
+        )
+
+    def _set_clam_message(self, message, diagnostics=""):
+        self.signature_status.setText(message)
+        self.clam_diagnostics.setPlainText(diagnostics)
+        self.clam_details_toggle.setChecked(False)
+        self.clam_details_toggle.setEnabled(bool(diagnostics))
+
     def check_yara(self):
         state = yara_store_snapshot(self.rules.text().strip())
-        detail = state.get("detail", "")
-        if state["status"] == "active":
-            self.yara_status.setText(
-                f"ACTIVE · Version {state['version']}\n"
-                f"SHA-256: {state['sha256']}\n"
-                f"Source: {state['path']}\n{detail}"
-            )
-        else:
-            self.yara_status.setText(f"{state['status'].upper()} · {detail}")
+        message, diagnostics = explain_yara(state)
+        self.yara_status.setText(message)
+        self.yara_diagnostics.setPlainText(diagnostics)
+        self.yara_details_toggle.setChecked(False)
+        self.yara_details_toggle.setEnabled(bool(diagnostics))
 
     def save(self):
         for key, edit in (("clam", self.clam), ("rule_store", self.rules),
@@ -320,25 +359,31 @@ class SettingsView(QWidget):
         snapshot = signature_snapshot(str(self.clam.text().strip() or "clamscan"))
         clam = snapshot["clamav"]
         databases = clam.get("databases", [])
-        lines = [
+        if clam["status"] == "error":
+            message = ("ClamAV status could not be checked. Verify the scanner "
+                       "executable path in Local Configuration.")
+        elif not databases:
+            message = ("ClamAV was found, but no signature database files were "
+                       "located in the configured system directory.")
+        else:
+            message = (f"ClamAV detected · {len(databases)} local signature database "
+                       "file(s) found. This does not guarantee they are current.")
+        from datetime import datetime, timezone
+        details = [
             f"Engine: {clam.get('engine_version', 'Unavailable')}",
-            f"Database status: {clam['status']}",
-            f"FreshClam installed: {'yes' if snapshot['freshclam_available'] else 'no'}",
+            f"Status: {clam['status']}",
+            f"FreshClam installed: {snapshot['freshclam_available']}",
             f"Database directory: {snapshot['database_path']}",
         ]
-        if databases:
-            from datetime import datetime, timezone
-            for database in databases:
-                stamp = datetime.fromtimestamp(
-                    database["modified_utc_epoch"], tz=timezone.utc
-                ).strftime("%Y-%m-%d %H:%M UTC")
-                lines.append(f"{database['name']} · {database['bytes']} bytes · modified {stamp}")
-        else:
-            lines.append("No recognized .cvd/.cld database files were found at this path.")
+        for db in databases:
+            stamp = datetime.fromtimestamp(
+                db["modified_utc_epoch"], tz=timezone.utc
+            ).strftime("%Y-%m-%d %H:%M UTC")
+            details.append(f"{db['name']} · {db['bytes']} bytes · modified {stamp}")
         if clam.get("detail"):
-            lines.append(str(clam["detail"]))
-        lines.append(snapshot["notice"])
-        self.signature_status.setText("\n".join(lines))
+            details.append(str(clam["detail"]))
+        details.append(snapshot["notice"])
+        self._set_clam_message(message, "\n".join(details))
 
     def start_signature_update(self):
         if self.update_proc is not None:
@@ -350,9 +395,9 @@ class SettingsView(QWidget):
         self.update_proc.finished.connect(self.signature_update_finished)
         self.update_proc.errorOccurred.connect(self.signature_update_error)
         self.update_button.setEnabled(False)
-        self.signature_status.setText(
-            "FreshClam running. Database locks, mirror access and permissions "
-            "are managed by FreshClam. No update is guaranteed."
+        self._set_clam_message(
+            "Checking for signature updates. This may take a few minutes. "
+            "The result will appear here."
         )
         self.update_proc.start()
         self.update_timer.start(240_000)
@@ -366,9 +411,10 @@ class SettingsView(QWidget):
         if self.update_proc is None:
             return
         if error == QProcess.FailedToStart:
-            self.signature_status.setText(
-                "Could not start FreshClam: " + self.update_proc.errorString()
+            message, details = explain_freshclam(
+                None, self.update_proc.errorString(), failed_to_start=True
             )
+            self._set_clam_message(message, details)
             self.finish_signature_process()
 
     def signature_update_finished(self, exit_code, _status):
@@ -376,13 +422,10 @@ class SettingsView(QWidget):
             return
         output = bytes(self.update_proc.readAllStandardOutput()).decode(errors="replace")
         errors = bytes(self.update_proc.readAllStandardError()).decode(errors="replace")
-        self.signature_status.setText(
-            ("FreshClam timed out after 240 seconds; update not verified.\n"
-             if self.update_expired else
-             "FreshClam completed. Check signature status to verify databases.\n"
-             if exit_code == 0 else f"FreshClam failed (exit {exit_code}).\n")
-            + (output + "\n" + errors).strip()[-1500:]
+        message, details = explain_freshclam(
+            exit_code, output + "\n" + errors, timed_out=self.update_expired
         )
+        self._set_clam_message(message, details)
         self.finish_signature_process()
 
     def finish_signature_process(self):
