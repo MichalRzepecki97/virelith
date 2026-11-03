@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from .update_manager import clamav_status
@@ -69,3 +70,18 @@ def yara_store_snapshot(rule_store: str) -> dict:
         }
     except (ValueError, OSError) as exc:
         return {"status": "invalid", "detail": str(exc)[:350]}
+
+def freshclam_service_status() -> dict:
+    """Best-effort systemd service check. Never change system services."""
+    if not sys.platform.startswith("linux") or shutil.which("systemctl") is None:
+        return {"status": "unavailable", "detail": "System service status unavailable."}
+    try:
+        done = subprocess.run(
+            ["systemctl", "is-active", "clamav-freshclam.service"],
+            capture_output=True, text=True, timeout=3, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {"status": "unavailable", "detail": str(exc)[:250]}
+    if done.returncode == 0 and done.stdout.strip() == "active":
+        return {"status": "active", "detail": "ClamAV FreshClam service is running."}
+    return {"status": "inactive", "detail": "FreshClam system service is not active or not installed."}
