@@ -44,3 +44,28 @@ def update_clamav(*, freshclam_exe: str = "freshclam", timeout: int = 240) -> di
         "detail": (done.stdout + "\n" + done.stderr).strip()[-3000:],
         "notice": "Check database state afterwards; this operation does not guarantee a new database.",
     }
+
+
+def yara_store_snapshot(rule_store: str) -> dict:
+    """Report only the validated active rules; never claim publisher identity.
+
+    The signed-rule activation workflow establishes publisher trust upstream.
+    This read-only check validates current store consistency (hash/version).
+    """
+    if not rule_store.strip():
+        return {
+            "status": "bundled_test_rules",
+            "detail": "No active signed rule store configured. Bundled rules are for testing only.",
+        }
+    from .active_rules import load_active_rules
+    try:
+        _source, metadata = load_active_rules(Path(rule_store).expanduser())
+        return {
+            "status": "active",
+            "version": metadata["version"],
+            "sha256": metadata["sha256"],
+            "path": metadata["path"],
+            "detail": "Active rules integrity verified locally. This does not revalidate publisher signature.",
+        }
+    except (ValueError, OSError) as exc:
+        return {"status": "invalid", "detail": str(exc)[:350]}
