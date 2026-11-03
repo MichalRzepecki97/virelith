@@ -320,13 +320,25 @@ class SettingsView(QWidget):
         snapshot = signature_snapshot(str(self.clam.text().strip() or "clamscan"))
         clam = snapshot["clamav"]
         databases = clam.get("databases", [])
-        self.signature_status.setText(
-            f"ClamAV status: {clam['status']} | "
-            f"Version: {clam.get('engine_version', 'unavailable')} | "
-            f"Local database files: {len(databases)} | "
-            f"FreshClam found: {'yes' if snapshot['freshclam_available'] else 'no'}\n"
-            + snapshot["notice"]
-        )
+        lines = [
+            f"Engine: {clam.get('engine_version', 'Unavailable')}",
+            f"Database status: {clam['status']}",
+            f"FreshClam installed: {'yes' if snapshot['freshclam_available'] else 'no'}",
+            f"Database directory: {snapshot['database_path']}",
+        ]
+        if databases:
+            from datetime import datetime, timezone
+            for database in databases:
+                stamp = datetime.fromtimestamp(
+                    database["modified_utc_epoch"], tz=timezone.utc
+                ).strftime("%Y-%m-%d %H:%M UTC")
+                lines.append(f"{database['name']} · {database['bytes']} bytes · modified {stamp}")
+        else:
+            lines.append("No recognized .cvd/.cld database files were found at this path.")
+        if clam.get("detail"):
+            lines.append(str(clam["detail"]))
+        lines.append(snapshot["notice"])
+        self.signature_status.setText("\\n".join(lines))
 
     def start_signature_update(self):
         if self.update_proc is not None:
