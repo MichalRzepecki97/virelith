@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QSettings, Signal, QProcess, QTimer
 from PySide6.QtWidgets import (
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget, QComboBox,
-    QScrollArea, QFrame,
+    QScrollArea, QFrame, QFileDialog, QMessageBox,
 )
 from .scan_history import recent_scans, get_scan
 from .quarantine import list_quarantine
@@ -13,6 +13,7 @@ from .history_filters import filter_scans
 from .quarantine_viewmodel import summarize_quarantine, filter_quarantine, quarantine_row
 from .signature_management import signature_snapshot, yara_store_snapshot, freshclam_service_status
 from .signature_messages import explain_freshclam, explain_yara
+from .yara_bundle_manager import activate_bundle
 
 
 class HistoryView(QWidget):
@@ -290,6 +291,41 @@ class SettingsView(QWidget):
         check_yara.setObjectName("secondary")
         check_yara.clicked.connect(self.check_yara)
         yara_layout.addWidget(check_yara, 0)
+        yara_layout.addWidget(QLabel("SIGNED RULE PACKAGE / OFFLINE IMPORT"))
+        guidance = QLabel(
+            "Only import a package signed by a publisher whose public key you "
+            "obtained independently. A key supplied with the same package is not trusted."
+        )
+        guidance.setWordWrap(True)
+        guidance.setStyleSheet("color:#9FBAC0; background:transparent;")
+        yara_layout.addWidget(guidance)
+        self.bundle_paths = {}
+        for name, caption, is_directory in (
+            ("rules", "YARA rules (.yar)", False),
+            ("manifest", "Signed manifest (.json)", False),
+            ("signature", "Manifest signature (.sig)", False),
+            ("trusted_key", "Independently trusted Ed25519 public key", False),
+            ("destination", "Local active rule store", True),
+        ):
+            line = QHBoxLayout()
+            path_edit = QLineEdit()
+            path_edit.setPlaceholderText(caption)
+            if name == "destination":
+                path_edit.setText(str(Path.home() / ".virelith" / "rules"))
+            line.addWidget(path_edit, 1)
+            select = QPushButton("Browse")
+            select.setObjectName("secondary")
+            select.clicked.connect(
+                lambda _checked=False, field=path_edit, folder=is_directory:
+                self._select_bundle_path(field, folder)
+            )
+            line.addWidget(select)
+            yara_layout.addLayout(line)
+            self.bundle_paths[name] = path_edit
+        self.activate_button = QPushButton("Verify signature & activate rules")
+        self.activate_button.setObjectName("secondary")
+        self.activate_button.clicked.connect(self.activate_yara_bundle)
+        yara_layout.addWidget(self.activate_button)
         layout.addWidget(yara_panel)
 
         settings_panel, settings_layout = self._panel("LOCAL CONFIGURATION")
@@ -356,6 +392,50 @@ class SettingsView(QWidget):
         self.yara_diagnostics.setPlainText(diagnostics)
         self.yara_details_toggle.setChecked(False)
         self.yara_details_toggle.setEnabled(bool(diagnostics))
+
+    def _select_bundle_path(self, field, folder):
+        if folder:
+            path = QFileDialog.getExistingDirectory(self, "Choose local rule store")
+        else:
+            path, _ = QFileDialog.getOpenFileName(self, "Choose signed package file")
+        if path:
+            field.setText(path)
+
+    def activate_yara_bundle(self):
+        values = {key: Path(field.text().strip()).expanduser()
+                  for key, field in self.bundle_paths.items()}
+        if any(not field.text().strip() for field in self.bundle_paths.values()):
+            self.yara_status.setText("Choose all required package files and a local store.")
+            return
+        # Explicit confirmation is appropriate for a trust-changing operation.
+        answer = QMessageBox.question(
+            self, "Activate signed YARA rules",
+            "The public key must have been obtained from a trusted channel "
+            "independently of this rule package. Verify its provenance before "
+            "activating these scanning rules. Continue?",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        if answer != QMessageBox.Yes:
+            return
+        result = activate_bundle(
+            values["rules"], values["manifest"], values["signature"],
+            values["trusted_key"], values["destination"],
+        )
+        if result.get("status") == "activated":
+            self.rules.setText(str(values["destination"]))
+            self.save()
+            self.check_yara()
+            self.status.setText(
+                f"Signed rule version {result['version']} activated. "
+                "New scans will use this store; existing reports are unchanged."
+            )
+        else:
+            self.yara_status.setText(
+                "Rule package not activated. Check the signature, trusted key and "
+                "manifest. Existing rules were not intentionally replaced."
+            )
+            self.yara_diagnostics.setPlainText(str(result.get("detail", "Unknown validation error")))
+            self.yara_details_toggle.setEnabled(True)
 
     def save(self):
         for key, edit in (("clam", self.clam), ("rule_store", self.rules),
