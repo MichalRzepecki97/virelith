@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 
 from .report_viewmodel import summarize_report
 from .report_export import analysis_payload, export_report_html, export_report_json
+from .evidence_comparison import compare_file_history
 
 
 def text_label(text, size=13, muted=False):
@@ -49,6 +50,7 @@ class ResultsView(QWidget):
         super().__init__()
         self.report = None
         self.selected_item = {}
+        self.history_db_path = None
         outer = QVBoxLayout(self)
         outer.setContentsMargins(30, 24, 30, 20)
         outer.setSpacing(0)
@@ -148,6 +150,11 @@ class ResultsView(QWidget):
         self.copy_analysis_button.setEnabled(False)
         self.copy_analysis_button.clicked.connect(self.copy_analysis)
         analysis_actions.addWidget(self.copy_analysis_button)
+        self.compare_button = QPushButton("Compare previous scans")
+        self.compare_button.setObjectName("secondary")
+        self.compare_button.setEnabled(False)
+        self.compare_button.clicked.connect(self.compare_history)
+        analysis_actions.addWidget(self.compare_button)
         self.export_json_button = QPushButton("Export JSON")
         self.export_html_button = QPushButton("Export HTML")
         for button in (self.export_json_button, self.export_html_button):
@@ -163,6 +170,12 @@ class ResultsView(QWidget):
         self.advanced.setMinimumHeight(190)
         self.advanced.hide()
         layout.addWidget(self.advanced)
+        self.comparison_details = QTextEdit()
+        self.comparison_details.setReadOnly(True)
+        self.comparison_details.setMinimumHeight(150)
+        self.comparison_details.setMaximumHeight(245)
+        self.comparison_details.setVisible(False)
+        layout.addWidget(self.comparison_details)
         layout.addStretch()
 
     def toggle_advanced(self, checked):
@@ -207,6 +220,14 @@ class ResultsView(QWidget):
         item = item if isinstance(item, dict) else {}
         self.selected_item = item
         self.copy_analysis_button.setEnabled(bool(item))
+        digest_candidate = str(item.get("sha256") or "")
+        self.compare_button.setEnabled(
+            self.history_db_path is not None
+            and len(digest_candidate) == 64
+            and all(ch in "0123456789abcdefABCDEF" for ch in digest_candidate)
+        )
+        self.comparison_details.clear()
+        self.comparison_details.hide()
         path = str(item.get("path", ""))
         self.selected_name.setText(Path(path).name if path else "No file selected")
         self.file_path.setText("Path: " + (path or "—"))
@@ -256,6 +277,41 @@ class ResultsView(QWidget):
             self.insights_container.addWidget(frame)
         self.advanced_button.setChecked(False)
         self.advanced_button.setEnabled(bool(item))
+
+    def compare_history(self):
+        digest = str(self.selected_item.get("sha256") or "")
+        if self.history_db_path is None or len(digest) != 64:
+            return
+        try:
+            result = compare_file_history(Path(self.history_db_path), digest)
+        except (OSError, ValueError, __import__("sqlite3").Error) as exc:
+            self.comparison_details.setPlainText(
+                "History comparison unavailable: " + str(exc)[:250]
+            )
+            self.comparison_details.show()
+            return
+        if result["status"] != "compared":
+            self.comparison_details.setPlainText(
+                "Fewer than two saved analyses exist for this exact SHA-256 "
+                "in recent local history. Rescan the same file later to compare."
+            )
+        else:
+            changes = result["comparison"]["changes"]
+            lines = [
+                "SAME FILE HASH / HISTORICAL EVIDENCE",
+                f"Earlier scan: {result['comparison']['older']}",
+                f"Later scan: {result['comparison']['newer']}",
+                "No malware verdict is inferred from these differences.",
+            ]
+            if not changes:
+                lines.append("No tracked result differences found.")
+            for name, diff in changes.items():
+                lines.append(
+                    f"{name.replace('_', ' ').title()}: "
+                    f"{diff['before']}  →  {diff['after']}"
+                )
+            self.comparison_details.setPlainText("\n".join(lines))
+        self.comparison_details.show()
 
     def export_report(self, format_name):
         if not self.report:
