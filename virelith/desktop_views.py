@@ -5,12 +5,13 @@ from PySide6.QtCore import QSettings, Signal, QProcess, QTimer
 from PySide6.QtWidgets import (
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget, QComboBox,
+    QScrollArea, QFrame,
 )
 from .scan_history import recent_scans, get_scan
 from .quarantine import list_quarantine
 from .history_filters import filter_scans
 from .quarantine_viewmodel import summarize_quarantine, filter_quarantine, quarantine_row
-from .signature_management import signature_snapshot
+from .signature_management import signature_snapshot, yara_store_snapshot
 
 
 class HistoryView(QWidget):
@@ -191,52 +192,122 @@ class QuarantineView(QWidget):
 
 
 class SettingsView(QWidget):
+    """Scrollable, operator-friendly settings and signature maintenance."""
+
     def __init__(self, settings: QSettings):
         super().__init__()
         self.settings = settings
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 28, 32, 28)
-        layout.setSpacing(15)
-        layout.addWidget(QLabel("VIRELITH  /  SETTINGS"))
-        heading = QLabel("Application settings")
-        heading.setStyleSheet("font-size: 25px; font-weight: 600;")
-        layout.addWidget(heading)
-        form = QFormLayout()
-        self.clam = QLineEdit(str(settings.value("clam", "clamscan")))
-        self.rules = QLineEdit(str(settings.value("rule_store", "")))
-        self.history = QLineEdit(str(settings.value("history_db", Path.home() / ".virelith" / "history.sqlite3")))
-        self.store = QLineEdit(str(settings.value("quarantine_store", Path.home() / ".virelith" / "quarantine")))
-        form.addRow("ClamAV executable", self.clam)
-        form.addRow("Signed rule store (optional)", self.rules)
-        form.addRow("History SQLite database", self.history)
-        form.addRow("Quarantine inventory directory", self.store)
-        layout.addLayout(form)
-        self.status = QLabel("Paths are not automatically validated. Only trusted rule stores should be used.")
-        self.status.setWordWrap(True)
-        layout.addWidget(self.status)
-        save = QPushButton("Save settings")
-        save.clicked.connect(self.save)
-        layout.addWidget(save)
-        layout.addWidget(QLabel("CLAMAV SIGNATURE DATABASES"))
-        self.signature_status = QLabel(
-            "Status not checked. Updates use the installed FreshClam utility."
-        )
-        self.signature_status.setWordWrap(True)
-        layout.addWidget(self.signature_status)
-        sig_actions = QHBoxLayout()
-        status_button = QPushButton("Check signature status")
-        status_button.clicked.connect(self.check_signatures)
-        sig_actions.addWidget(status_button)
-        self.update_button = QPushButton("Run FreshClam update")
-        self.update_button.clicked.connect(self.start_signature_update)
-        sig_actions.addWidget(self.update_button)
-        layout.addLayout(sig_actions)
         self.update_proc = None
         self.update_expired = False
         self.update_timer = QTimer(self)
         self.update_timer.setSingleShot(True)
         self.update_timer.timeout.connect(self.signature_update_timeout)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        outer.addWidget(scroll)
+        body = QWidget()
+        scroll.setWidget(body)
+        layout = QVBoxLayout(body)
+        layout.setContentsMargins(32, 27, 32, 30)
+        layout.setSpacing(15)
+
+        eyebrow = QLabel("VIRELITH  /  SETTINGS")
+        eyebrow.setStyleSheet("font-size:11px; color:#8FADB4;")
+        layout.addWidget(eyebrow)
+        heading = QLabel("Signature management")
+        heading.setStyleSheet("font-size:27px; font-weight:700;")
+        layout.addWidget(heading)
+        intro = QLabel(
+            "Local engine status, trusted rule-store inventory and explicit updates. "
+            "Virelith does not provide real-time protection."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color:#A6BDC3;")
+        layout.addWidget(intro)
+
+        clam_panel, clam_layout = self._panel("CLAMAV / SIGNATURE DATABASES")
+        self.signature_status = QLabel("Not checked. Inspect local database files to see their state.")
+        self.signature_status.setWordWrap(True)
+        self.signature_status.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        clam_layout.addWidget(self.signature_status)
+        actions = QHBoxLayout()
+        status_button = QPushButton("Check ClamAV status")
+        status_button.setObjectName("secondary")
+        status_button.clicked.connect(self.check_signatures)
+        actions.addWidget(status_button)
+        self.update_button = QPushButton("Run FreshClam update")
+        self.update_button.setObjectName("primary")
+        self.update_button.clicked.connect(self.start_signature_update)
+        actions.addWidget(self.update_button)
+        actions.addStretch()
+        clam_layout.addLayout(actions)
+        layout.addWidget(clam_panel)
+
+        yara_panel, yara_layout = self._panel("YARA-X / ACTIVE RULE STORE")
+        self.yara_status = QLabel("Not checked. Rules must be activated in a trusted local store.")
+        self.yara_status.setWordWrap(True)
+        self.yara_status.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        yara_layout.addWidget(self.yara_status)
+        check_yara = QPushButton("Verify active YARA rules")
+        check_yara.setObjectName("secondary")
+        check_yara.clicked.connect(self.check_yara)
+        yara_layout.addWidget(check_yara, 0)
+        layout.addWidget(yara_panel)
+
+        settings_panel, settings_layout = self._panel("LOCAL CONFIGURATION")
+        form = QFormLayout()
+        self.clam = QLineEdit(str(settings.value("clam", "clamscan")))
+        self.rules = QLineEdit(str(settings.value("rule_store", "")))
+        self.history = QLineEdit(str(settings.value(
+            "history_db", Path.home() / ".virelith" / "history.sqlite3")))
+        self.store = QLineEdit(str(settings.value(
+            "quarantine_store", Path.home() / ".virelith" / "quarantine")))
+        for title, field in (
+            ("ClamAV executable", self.clam),
+            ("Signed rule store", self.rules),
+            ("History database", self.history),
+            ("Quarantine inventory", self.store),
+        ):
+            form.addRow(title, field)
+        settings_layout.addLayout(form)
+        self.status = QLabel("Configuration paths are not automatically trusted.")
+        self.status.setWordWrap(True)
+        self.status.setStyleSheet("color:#A5BBC0;")
+        settings_layout.addWidget(self.status)
+        save_button = QPushButton("Save configuration")
+        save_button.setObjectName("secondary")
+        save_button.clicked.connect(self.save)
+        settings_layout.addWidget(save_button)
+        layout.addWidget(settings_panel)
         layout.addStretch()
+
+    @staticmethod
+    def _panel(title):
+        panel = QFrame()
+        panel.setObjectName("panel")
+        inner = QVBoxLayout(panel)
+        inner.setContentsMargins(20, 18, 20, 18)
+        inner.setSpacing(12)
+        heading = QLabel(title)
+        heading.setStyleSheet("color:#80D9B8; font-size:12px; font-weight:650; background:transparent;")
+        inner.addWidget(heading)
+        return panel, inner
+
+    def check_yara(self):
+        state = yara_store_snapshot(self.rules.text().strip())
+        detail = state.get("detail", "")
+        if state["status"] == "active":
+            self.yara_status.setText(
+                f"ACTIVE · Version {state['version']}\n"
+                f"SHA-256: {state['sha256']}\n"
+                f"Source: {state['path']}\n{detail}"
+            )
+        else:
+            self.yara_status.setText(f"{state['status'].upper()} · {detail}")
 
     def save(self):
         for key, edit in (("clam", self.clam), ("rule_store", self.rules),
