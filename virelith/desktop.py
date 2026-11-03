@@ -108,6 +108,7 @@ class Desktop(QMainWindow):
         self.stack.addWidget(self.overview_view)
         self.stack.addWidget(self.scan_page())
         self.results_view = ResultsView()
+        self.results_view.history_db_path = self.history_path()
         self.stack.addWidget(self.results_view)
         self.history_view = HistoryView(self.history_path())
         self.history_view.report_selected.connect(self.open_history_report)
@@ -128,6 +129,7 @@ class Desktop(QMainWindow):
         return Path(str(self.settings.value('quarantine_store', Path.home() / '.virelith' / 'quarantine'))).expanduser()
 
     def change_page(self, index: int) -> None:
+        self.results_view.history_db_path = self.history_path()
         if index == 0:
             self.overview_view.history_path = self.history_path()
             self.overview_view.clam_command = str(self.settings.value('clam', 'clamscan'))
