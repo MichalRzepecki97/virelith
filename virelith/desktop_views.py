@@ -1,7 +1,7 @@
 """Functional Qt views for local history, quarantine inventory and settings."""
 from pathlib import Path
 
-from PySide6.QtCore import QSettings, Signal, QProcess, QTimer
+from PySide6.QtCore import Qt, QSettings, Signal, QProcess, QTimer
 from PySide6.QtWidgets import (
     QFormLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTableWidget, QTableWidgetItem, QTextEdit, QVBoxLayout, QWidget, QComboBox,
