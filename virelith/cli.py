@@ -3,6 +3,8 @@ import argparse
 import hashlib
 import json
 import os
+import re
+from importlib.metadata import PackageNotFoundError, version as package_version
 from pathlib import Path
 import subprocess
 import threading
@@ -25,6 +27,30 @@ def scan_clamav(path: Path, exe: str) -> dict:
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {"status": "error", "detail": str(exc)}
 
+
+
+def scanner_versions(clam_exe: str) -> dict:
+    """Capture tool versions once per scan; never infer freshness from timestamps."""
+    clamav = {"engine": "unknown", "signature_database": "unknown"}
+    try:
+        done = subprocess.run(
+            [clam_exe, "--version"], capture_output=True, text=True,
+            timeout=5, errors="replace", check=False,
+        )
+        output = (done.stdout + " " + done.stderr).strip()
+        match = re.search(r"ClamAV\s+([^\s/]+)(?:/(\d+))?", output)
+        if done.returncode == 0 and match:
+            clamav = {
+                "engine": match.group(1),
+                "signature_database": match.group(2) or "unknown",
+            }
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        yara_x = package_version("yara-x")
+    except PackageNotFoundError:
+        yara_x = "unknown"
+    return {"clamav": clamav, "yara_x": yara_x}
 
 def sha256_file(path: Path) -> str:
     h = hashlib.sha256()
@@ -147,9 +173,11 @@ def heartbeat_until(stop: threading.Event, interval: float = 20.0) -> None:
         print("VIRELITH_HEARTBEAT " + json.dumps({"monotonic": time.monotonic()}), flush=True)
 
 
-def report_payload(args, results, metadata, *, complete=False, error=None):
+def report_payload(args, results, metadata, *, engine_metadata=None,
+                   complete=False, error=None):
     return {"schema": 1, "created_utc": args.created_utc,
             "target": str(args.target), "yara_rules": metadata,
+            "engines": engine_metadata or {},
             "files": list(results), "traversal_error": error, "complete": complete}
 
 
@@ -184,8 +212,9 @@ def main():
         parser.error(f"Cannot compile rules: {exc}")
     results = []
     traversal_error = None
+    engine_metadata = scanner_versions(args.clam)
     args.created_utc = datetime.now(timezone.utc).isoformat()
-    save_report_atomic(args.report, report_payload(args, results, rule_metadata))
+    save_report_atomic(args.report, report_payload(args, results, rule_metadata, engine_metadata=engine_metadata))
     heartbeat_stop = threading.Event()
     heartbeat_thread = threading.Thread(target=heartbeat_until, args=(heartbeat_stop,), daemon=True)
     heartbeat_thread.start()
@@ -194,7 +223,7 @@ def main():
                                 max_depth=args.max_depth, max_total_mb=args.max_total_mb):
             result = scan_one(path, args.clam, compiled, args.max_yara_mb * 1024 * 1024)
             results.append(result)
-            save_report_atomic(args.report, report_payload(args, results, rule_metadata))
+            save_report_atomic(args.report, report_payload(args, results, rule_metadata, engine_metadata=engine_metadata))
             print(f"{result['verdict']:>12} {path}", flush=True)
             print("VIRELITH_PROGRESS " + json.dumps({"processed": len(results), "detections": sum(r["verdict"] == "detection" for r in results)}), flush=True)
     except FileNotFoundError:
@@ -204,7 +233,7 @@ def main():
         print(f"Scan incomplete: {exc}", file=__import__("sys").stderr)
     heartbeat_stop.set()
     heartbeat_thread.join(timeout=1)
-    payload = report_payload(args, results, rule_metadata, complete=traversal_error is None, error=traversal_error)
+    payload = report_payload(args, results, rule_metadata, engine_metadata=engine_metadata, complete=traversal_error is None, error=traversal_error)
     save_report_atomic(args.report, payload)
     print(f"Report: {args.report.resolve()}")
     if args.history_db is not None:

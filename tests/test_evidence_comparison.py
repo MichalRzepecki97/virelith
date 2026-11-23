@@ -12,6 +12,10 @@ def report(when, verdict, yara_status, matches=(), rule_version=None):
         "created_utc": when, "target": "/tmp/demo.exe",
         "complete": True,
         "yara_rules": {"version": rule_version} if rule_version else {},
+        "engines": {
+            "clamav": {"engine": "1.4.6", "signature_database": "28173"},
+            "yara_x": "1.20.0",
+        },
         "files": [{"path": "/tmp/demo.exe", "sha256": A, "verdict": verdict,
                    "clamav": {"status": "no_detection"},
                    "yara": {"status": yara_status, "matches": list(matches)},
@@ -56,3 +60,33 @@ def test_invalid_digest_rejected(tmp_path):
 
 def test_no_history(tmp_path):
     assert compare_file_history(tmp_path / "missing.db", A)["count"] == 0
+
+
+def test_engine_version_changes_are_reported(tmp_path):
+    db = tmp_path / "hist.sqlite"
+    first = report("2026-01-01", "no_detection", "no_detection")
+    second = report("2026-01-02", "no_detection", "no_detection")
+    second["engines"]["clamav"]["signature_database"] = "28174"
+    second["engines"]["clamav"]["engine"] = "1.4.7"
+    second["engines"]["yara_x"] = "1.21.0"
+    save_scan(db, first)
+    save_scan(db, second)
+    changes = compare_file_history(db, A)["comparison"]["changes"]
+    assert changes["clamav_engine_version"]["after"] == "1.4.7"
+    assert changes["clamav_signature_database"]["after"] == "28174"
+    assert changes["yara_x_version"]["after"] == "1.21.0"
+
+
+def test_malformed_optional_provenance_does_not_break_comparison(tmp_path):
+    db = tmp_path / "hist.sqlite"
+    first = report("2026-01-01", "no_detection", "no_detection")
+    second = report("2026-01-02", "no_detection", "no_detection")
+    first["engines"] = "unexpected legacy value"
+    second["engines"] = {"clamav": ["not", "a", "mapping"]}
+    first["yara_rules"] = []
+    second["yara_rules"] = None
+    save_scan(db, first)
+    save_scan(db, second)
+    outcome = compare_file_history(db, A)
+    assert outcome["status"] == "compared"
+    assert "clamav_engine_version" not in outcome["comparison"]["changes"]
