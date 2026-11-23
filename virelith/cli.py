@@ -38,7 +38,7 @@ def scanner_versions(clam_exe: str) -> dict:
             timeout=5, errors="replace", check=False,
         )
         output = (done.stdout + " " + done.stderr).strip()
-        match = re.search(r"ClamAV\\s+([^\\s/]+)(?:/(\\d+))?", output)
+        match = re.search(r"ClamAV\s+([^\s/]+)(?:/(\d+))?", output)
         if done.returncode == 0 and match:
             clamav = {
                 "engine": match.group(1),
@@ -223,7 +223,7 @@ def main():
                                 max_depth=args.max_depth, max_total_mb=args.max_total_mb):
             result = scan_one(path, args.clam, compiled, args.max_yara_mb * 1024 * 1024)
             results.append(result)
-            save_report_atomic(args.report, report_payload(args, results, rule_metadata))
+            save_report_atomic(args.report, report_payload(args, results, rule_metadata, engine_metadata=engine_metadata))
             print(f"{result['verdict']:>12} {path}", flush=True)
             print("VIRELITH_PROGRESS " + json.dumps({"processed": len(results), "detections": sum(r["verdict"] == "detection" for r in results)}), flush=True)
     except FileNotFoundError:
