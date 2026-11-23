@@ -77,3 +77,18 @@ def test_engine_version_changes_are_reported(tmp_path):
     assert changes["clamav_engine_version"]["after"] == "1.4.7"
     assert changes["clamav_signature_database"]["after"] == "28174"
     assert changes["yara_x_version"]["after"] == "1.21.0"
+
+
+def test_malformed_optional_provenance_does_not_break_comparison(tmp_path):
+    db = tmp_path / "hist.sqlite"
+    first = report("2026-01-01", "no_detection", "no_detection")
+    second = report("2026-01-02", "no_detection", "no_detection")
+    first["engines"] = "unexpected legacy value"
+    second["engines"] = {"clamav": ["not", "a", "mapping"]}
+    first["yara_rules"] = []
+    second["yara_rules"] = None
+    save_scan(db, first)
+    save_scan(db, second)
+    outcome = compare_file_history(db, A)
+    assert outcome["status"] == "compared"
+    assert "clamav_engine_version" not in outcome["comparison"]["changes"]
