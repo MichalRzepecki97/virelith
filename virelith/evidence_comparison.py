@@ -12,6 +12,7 @@ import sqlite3
 
 _SHA256 = re.compile(r"^[a-fA-F0-9]{64}$")
 _MAX_REPORTS = 500
+_MAX_REPORT_JSON_BYTES = 16 * 1024 * 1024
 
 
 def _file_evidence(report: dict, digest: str) -> dict | None:
@@ -41,17 +42,22 @@ def matching_scans(db_path: Path, sha256: str, limit: int = 10) -> list[dict]:
         )
         for timestamp, source in rows:
             try:
+                if not isinstance(source, str) or len(source.encode("utf-8")) > _MAX_REPORT_JSON_BYTES:
+                    continue
                 report = json.loads(source)
                 if not isinstance(report, dict):
                     continue
                 item = _file_evidence(report, sha256.lower())
-            except (ValueError, TypeError):
+            except (ValueError, TypeError, UnicodeError):
                 continue
             if item is not None:
+                rules = report.get("yara_rules")
+                engines = report.get("engines")
                 matched.append({
                     "timestamp": str(timestamp),
                     "file": item,
-                    "rules": report.get("yara_rules") or {},
+                    "rules": rules if isinstance(rules, dict) else {},
+                    "engines": engines if isinstance(engines, dict) else {},
                     "complete": report.get("complete", True),
                 })
                 if len(matched) >= limit:
@@ -87,6 +93,15 @@ def compare_two(older: dict, newer: dict) -> dict:
         "insight_ids": (_insights(a), _insights(b)),
         "rule_version": (str((older.get("rules") or {}).get("version", "unknown")),
                          str((newer.get("rules") or {}).get("version", "unknown"))),
+        "clamav_engine_version": (
+            str(((older.get("engines") or {}).get("clamav") or {}).get("engine", "unknown")),
+            str(((newer.get("engines") or {}).get("clamav") or {}).get("engine", "unknown"))),
+        "clamav_signature_database": (
+            str(((older.get("engines") or {}).get("clamav") or {}).get("signature_database", "unknown")),
+            str(((newer.get("engines") or {}).get("clamav") or {}).get("signature_database", "unknown"))),
+        "yara_x_version": (
+            str((older.get("engines") or {}).get("yara_x", "unknown")),
+            str((newer.get("engines") or {}).get("yara_x", "unknown"))),
         "scan_complete": (bool(older.get("complete", True)),
                           bool(newer.get("complete", True))),
     }
