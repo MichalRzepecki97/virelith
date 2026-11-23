@@ -85,30 +85,38 @@ def _insights(file: dict) -> list[str]:
 def compare_two(older: dict, newer: dict) -> dict:
     """Explain changes only; caller determines which snapshot is older."""
     a, b = older["file"], newer["file"]
+    old_rules = older.get("rules")
+    new_rules = newer.get("rules")
+    old_engines = older.get("engines")
+    new_engines = newer.get("engines")
+    old_clam = old_engines.get("clamav") if isinstance(old_engines, dict) else {}
+    new_clam = new_engines.get("clamav") if isinstance(new_engines, dict) else {}
+    old_clam = old_clam if isinstance(old_clam, dict) else {}
+    new_clam = new_clam if isinstance(new_clam, dict) else {}
     fields = {
         "verdict": (str(a.get("verdict", "unknown")), str(b.get("verdict", "unknown"))),
         "clamav_status": (_engine_status(a, "clamav"), _engine_status(b, "clamav")),
         "yara_status": (_engine_status(a, "yara"), _engine_status(b, "yara")),
         "yara_matches": (_matches(a), _matches(b)),
         "insight_ids": (_insights(a), _insights(b)),
-        "rule_version": (str((older.get("rules") or {}).get("version", "unknown")),
-                         str((newer.get("rules") or {}).get("version", "unknown"))),
+        "rule_version": (str(old_rules.get("version", "unknown") if isinstance(old_rules, dict) else "unknown"),
+                         str(new_rules.get("version", "unknown") if isinstance(new_rules, dict) else "unknown")),
         "clamav_engine_version": (
-            str(((older.get("engines") or {}).get("clamav") or {}).get("engine", "unknown")),
-            str(((newer.get("engines") or {}).get("clamav") or {}).get("engine", "unknown"))),
+            str(old_clam.get("engine", "unknown")),
+            str(new_clam.get("engine", "unknown"))),
         "clamav_signature_database": (
-            str(((older.get("engines") or {}).get("clamav") or {}).get("signature_database", "unknown")),
-            str(((newer.get("engines") or {}).get("clamav") or {}).get("signature_database", "unknown"))),
+            str(old_clam.get("signature_database", "unknown")),
+            str(new_clam.get("signature_database", "unknown"))),
         "yara_x_version": (
-            str((older.get("engines") or {}).get("yara_x", "unknown")),
-            str((newer.get("engines") or {}).get("yara_x", "unknown"))),
+            str(old_engines.get("yara_x", "unknown") if isinstance(old_engines, dict) else "unknown"),
+            str(new_engines.get("yara_x", "unknown") if isinstance(new_engines, dict) else "unknown")),
         "scan_complete": (bool(older.get("complete", True)),
                           bool(newer.get("complete", True))),
     }
     return {
         "older": older["timestamp"], "newer": newer["timestamp"],
         "changes": {k: {"before": x, "after": y} for k, (x, y) in fields.items() if x != y},
-        "same_hash": a.get("sha256", "").lower() == b.get("sha256", "").lower(),
+        "same_hash": str(a.get("sha256") or "").lower() == str(b.get("sha256") or "").lower(),
         "notice": "Local historical comparison only; no new scan or malware verdict.",
     }
 
