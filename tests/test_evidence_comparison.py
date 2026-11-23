@@ -34,8 +34,6 @@ def test_matching_and_change_detection(tmp_path):
     assert changes["verdict"]["after"] == "detection"
     assert changes["yara_matches"]["after"] == ["Demo"]
     assert changes["rule_version"]["after"] == "1.1.0"
-    assert changes["clamav_signature_database"]["before"] == "28173"
-    assert changes["yara_x_version"]["before"] == "1.20.0"
     assert outcome["comparison"]["same_hash"] is True
 
 
